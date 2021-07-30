@@ -12,6 +12,6 @@ class TestCharm(unittest.TestCase):
         harness = Harness(JujuControllerCharm)
         self.addCleanup(harness.cleanup)
         harness.begin()
-        self.assertEqual(list(harness.charm._stored.things), [])
+        self.assertEqual(list(harness.charm._stored.controller_config), [])
         harness.update_config({"controller-url": "https://controller"})
-        self.assertEqual(list(harness.charm._stored.things), ["https://controller"])
+        self.assertEqual(list(harness.charm._stored.controller_config), ["https://controller"])
