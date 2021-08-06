@@ -8,10 +8,20 @@ from charm import JujuControllerCharm
 
 
 class TestCharm(unittest.TestCase):
-    def test_config_changed(self):
+    def test_relation_joined(self):
         harness = Harness(JujuControllerCharm)
         self.addCleanup(harness.cleanup)
         harness.begin()
-        self.assertEqual(list(harness.charm._stored.controller_config), [])
-        harness.update_config({"controller-url": "https://controller"})
-        self.assertEqual(list(harness.charm._stored.controller_config), ["https://controller"])
+        harness.set_leader(True)
+        harness.update_config({"controller-url": "wss://controller/api"})
+        harness.update_config({"model-url-template": "wss://controller/model/${modelUUID}/api"})
+        harness.update_config({"identity-provider-url": ""})
+        harness.update_config({"is-juju": "true"})
+        relation_id = harness.add_relation('dashboard', 'juju-dashboard')
+        harness.add_relation_unit(relation_id, 'juju-dashboard/0')
+
+        data = harness.get_relation_data(relation_id, 'juju-controller')
+        self.assertEqual(data["controller-url"], "wss://controller/api")
+        self.assertEqual(data["model-url-template"], "wss://controller/model/${modelUUID}/api")
+        self.assertEqual(data["is-juju"], "true")
+        self.assertEqual(data.get("identity-provider-url"), None)

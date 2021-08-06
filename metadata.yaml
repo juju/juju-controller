@@ -6,10 +6,6 @@ description: |
   of functionality of a Juju controller.
 summary: |
   The Juju controller.
-series:
-  - xenial
-  - bionic
-  - focal
 provides:
   dashboard:
     interface: juju-dashboard

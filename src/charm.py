@@ -19,16 +19,25 @@ class JujuControllerCharm(CharmBase):
         super().__init__(*args)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.start, self._on_start)
-        self._stored.set_default(controller_config=[])
+        self.framework.observe(
+            self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
 
     def _on_config_changed(self, _):
-        current = self.config["controller-url"]
-        if current not in self._stored.controller_config:
-            logger.info("got a new controller-url: %r", current)
-            self._stored.controller_config.append(current)
+        controller_url = self.config["controller-url"]
+        logger.info("got a new controller-url: %r", controller_url)
+
+    def _on_dashboard_relation_joined(self, event):
+        logger.info("got a new dashboard relation: %r", event)
+        if not self.model.relations:
+            return
+        for relation in self.model.relations['dashboard']:
+            relation.data[self.app]['controller-url'] = self.config['controller-url']
+            relation.data[self.app]['model-url-template'] = self.config['model-url-template']
+            relation.data[self.app]['identity-provider-url'] = self.config['identity-provider-url']
+            relation.data[self.app]['is-juju'] = str(self.config['is-juju'])
 
 
 if __name__ == "__main__":
