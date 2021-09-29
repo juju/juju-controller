@@ -14,7 +14,6 @@ class TestCharm(unittest.TestCase):
         harness.begin()
         harness.set_leader(True)
         harness.update_config({"controller-url": "wss://controller/api"})
-        harness.update_config({"model-url-template": "wss://controller/model/${modelUUID}/api"})
         harness.update_config({"identity-provider-url": ""})
         harness.update_config({"is-juju": "true"})
         relation_id = harness.add_relation('dashboard', 'juju-dashboard')
@@ -22,6 +21,5 @@ class TestCharm(unittest.TestCase):
 
         data = harness.get_relation_data(relation_id, 'juju-controller')
         self.assertEqual(data["controller-url"], "wss://controller/api")
-        self.assertEqual(data["model-url-template"], "wss://controller/model/${modelUUID}/api")
         self.assertEqual(data["is-juju"], "true")
         self.assertEqual(data.get("identity-provider-url"), None)

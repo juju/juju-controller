@@ -35,7 +35,6 @@ class JujuControllerCharm(CharmBase):
             return
         for relation in self.model.relations['dashboard']:
             relation.data[self.app]['controller-url'] = self.config['controller-url']
-            relation.data[self.app]['model-url-template'] = self.config['model-url-template']
             relation.data[self.app]['identity-provider-url'] = self.config['identity-provider-url']
             relation.data[self.app]['is-juju'] = str(self.config['is-juju'])
 
