@@ -6,10 +6,6 @@ options:
     default: ""
     description: The URL used to access the controller API.
     type: string
-  model-url-template:
-    default: ""
-    description: The URL template used to access a model API.
-    type: string
   identity-provider-url:
     default: ""
     description: The URL used to access an external identity provider.
