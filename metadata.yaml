@@ -9,3 +9,5 @@ summary: |
 provides:
   dashboard:
     interface: juju-dashboard
+  website:
+    interface: http
