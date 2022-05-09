@@ -1,10 +1,17 @@
 # Copyright 2021 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 
+import os
 import unittest
+from unittest.mock import patch, mock_open
 
 from ops.testing import Harness
 from charm import JujuControllerCharm
+
+
+agent_conf = '''
+apiport: 17070
+'''
 
 
 class TestCharm(unittest.TestCase):
@@ -23,3 +30,22 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["controller-url"], "wss://controller/api")
         self.assertEqual(data["is-juju"], "true")
         self.assertEqual(data.get("identity-provider-url"), None)
+
+    @patch.dict(os.environ, {
+        "JUJU_MACHINE_ID": "machine-0",
+        "JUJU_UNIT_NAME": "controller/0"
+    })
+    @patch("charmhelpers.core.hookenv.ingress_address")
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_website_relation_joined(self, open, ingress_address):
+        ingress_address.return_value = "192.168.1.17"
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+        relation_id = harness.add_relation('website', 'haproxy')
+        harness.add_relation_unit(relation_id, 'haproxy/0')
+
+        data = harness.get_relation_data(relation_id, 'juju-controller/0')
+        self.assertEqual(data["hostname"], "192.168.1.17")
+        self.assertEqual(data["private-address"], "192.168.1.17")
+        self.assertEqual(data["port"], '17070')
