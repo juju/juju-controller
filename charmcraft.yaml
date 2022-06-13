@@ -1,4 +1,7 @@
 type: charm
+parts:
+  charm:
+    charm-python-packages: [setuptools,markdown]
 bases:
     - build-on:
         - name: ubuntu
