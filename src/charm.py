@@ -36,12 +36,15 @@ class JujuControllerCharm(CharmBase):
 
     def _on_dashboard_relation_joined(self, event):
         logger.info("got a new dashboard relation: %r", event)
-        if not self.model.relations:
-            return
-        for relation in self.model.relations['dashboard']:
-            relation.data[self.app]['controller-url'] = self.config['controller-url']
-            relation.data[self.app]['identity-provider-url'] = self.config['identity-provider-url']
-            relation.data[self.app]['is-juju'] = str(self.config['is-juju'])
+
+        event.relation.data[self.app].update({
+            'controller-url': self.config['controller-url'],
+            'identity-provider-url': self.config['identity-provider-url'],
+            'is-juju': str(self.config['is-juju']),
+        })
+
+        # TODO: do we need to poke something on the controller so that the `juju
+        # dashboard` command will work?
 
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
@@ -52,11 +55,13 @@ class JujuControllerCharm(CharmBase):
             self.unit.status = BlockedStatus('machine does not appear to be a controller')
             return
 
-        for relation in self.model.relations['website']:
-            ingress_address = hookenv.ingress_address(relation.id, hookenv.local_unit())
-            relation.data[self.unit]['hostname'] = ingress_address
-            relation.data[self.unit]['private-address'] = ingress_address
-            relation.data[self.unit]['port'] = str(port)
+        ingress_address = hookenv.ingress_address(event.relation.id, hookenv.local_unit())
+
+        event.relation.data[self.unit].update({
+            'hostname': ingress_address,
+            'private-address': ingress_address,
+            'port': str(port)
+        })
 
 
 def api_port():
