@@ -3,11 +3,10 @@
 
 import os
 import unittest
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch
 
-from ops.testing import Harness
 from charm import JujuControllerCharm
-
+from ops.testing import Harness
 
 agent_conf = '''
 apiport: 17070
@@ -35,10 +34,11 @@ class TestCharm(unittest.TestCase):
         "JUJU_MACHINE_ID": "machine-0",
         "JUJU_UNIT_NAME": "controller/0"
     })
-    @patch("charmhelpers.core.hookenv.ingress_address")
+    @patch("ops.model.Model.get_binding")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     def test_website_relation_joined(self, open, ingress_address):
-        ingress_address.return_value = "192.168.1.17"
+        ingress_address.return_value = mockBinding("192.168.1.17")
+
         harness = Harness(JujuControllerCharm)
         self.addCleanup(harness.cleanup)
         harness.begin()
@@ -49,3 +49,13 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["hostname"], "192.168.1.17")
         self.assertEqual(data["private-address"], "192.168.1.17")
         self.assertEqual(data["port"], '17070')
+
+
+class mockBinding:
+    def __init__(self, address):
+        self.network = mockNetwork(address)
+
+
+class mockNetwork:
+    def __init__(self, address):
+        self.ingress_address = address
