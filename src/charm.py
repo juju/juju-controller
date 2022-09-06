@@ -10,8 +10,8 @@ from charmhelpers.core import hookenv
 from charms.loki_k8s.v0.loki_push_api import LokiPushApiConsumer
 from ops.charm import CharmBase
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus
-from ops.framework import StoredState, EventBase
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.framework import StoredState
 from subprocess import check_call
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ class JujuControllerCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
+        self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.start, self._on_start)
         self.framework.observe(
@@ -31,9 +32,7 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
 
-        # TODO: inside __init__, this will be run on every hook
-        # Move somewhere so it's only run once on deploy/install/start
-        self._setup_promtail()
+        # Set up Loki integration
         self._loki_consumer = LokiPushApiConsumer(self,
             relation_name=LOGGING_RELATION_NAME)
         self.framework.observe(
@@ -42,6 +41,10 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self._loki_consumer.on.loki_push_api_endpoint_departed,
             self._restart_promtail)
+
+    def _on_install(self, _):
+        self.unit.status = MaintenanceStatus("setting up Promtail")
+        self._setup_promtail()
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
@@ -106,7 +109,7 @@ WantedBy=multi-user.target
         # Start promtail service
         self._restart_promtail()
 
-    def _restart_promtail(self, event: EventBase = None):
+    def _restart_promtail(self, _ = None):
         '''Reconfigures and restarts the promtail service when the logging
         relation is changed.
         Assumes the promtail service has already been set up by _setup_promtail
