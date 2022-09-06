@@ -83,6 +83,9 @@ class JujuControllerCharm(CharmBase):
         })
 
     def _setup_promtail(self):
+        """Sets up the promtail service on the machine. We don't have to worry
+        about removal of Promtail since you can't remove the controller charm.
+        """
         # Download promtail binary
         check_call(["curl", "-LO", "https://github.com/grafana/loki/releases/download/v2.6.1/promtail-linux-amd64.zip"])
         check_call(["busybox", "unzip", "promtail-linux-amd64.zip"])
@@ -110,10 +113,10 @@ WantedBy=multi-user.target
         self._restart_promtail()
 
     def _restart_promtail(self, _ = None):
-        '''Reconfigures and restarts the promtail service when the logging
+        """Reconfigures and restarts the promtail service when the logging
         relation is changed.
         Assumes the promtail service has already been set up by _setup_promtail
-        '''
+        """
 
         # Find client push urls
         endpoints = []
@@ -142,29 +145,29 @@ WantedBy=multi-user.target
 
 
     def _promtail_base_config(self):
-        '''Returns base configuration for Promtail (to be serialised to yaml)'''
+        """Returns base configuration for Promtail (to be serialised to yaml)"""
         return {
-            'server': {
-                'http_listen_port': 9080,
-                'grpc_listen_port': 0
-            },
+            # 'server': {
+            #     'http_listen_port': 9080,
+            #     'grpc_listen_port': 0
+            # },
             'positions': {
                 'filename': '/etc/promtail/positions.yaml'
             },
             # 'clients': to be filled in later
             'scrape_configs': [{
-                'job_name': 'varlog',
+                'job_name': 'syslog',
                 'static_configs': [{
                     'labels': {
-                        'job': 'varlog',
-                        '__path__': '/var/log/*log'
+                        # 'job': 'varlog',
+                        '__path__': '/var/log/syslog'
                     }
                 }]
             }, {
                 'job_name': 'logsink',
                 'static_configs': [{
                     'labels': {
-                        'job': 'logsink',
+                        # 'job': 'logsink',
                         '__path__': '/var/log/juju/logsink.log'
                     }
                 }]
@@ -173,10 +176,10 @@ WantedBy=multi-user.target
 
 
 def api_port():
-    ''' api_port determines the port that the controller's API server is
-        listening on.  If the machine does not appear to be a juju
-        controller then None is returned.
-    '''
+    """api_port determines the port that the controller's API server is
+    listening on.  If the machine does not appear to be a juju controller,
+    then None is returned.
+    """
     machine = os.getenv('JUJU_MACHINE_ID')
     if machine is None:
         return None
