@@ -11,3 +11,7 @@ provides:
     interface: juju-dashboard
   website:
     interface: http
+requires:
+  logging:
+    interface: loki_push_api
+    optional: true
