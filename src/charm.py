@@ -4,13 +4,13 @@
 
 import logging
 import os
-import yaml
 
-from charmhelpers.core import hookenv
+import yaml
+# from charmhelpers.core import hookenv
 from ops.charm import CharmBase
+from ops.framework import StoredState
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus
-from ops.framework import StoredState
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +55,15 @@ class JujuControllerCharm(CharmBase):
             self.unit.status = BlockedStatus('machine does not appear to be a controller')
             return
 
-        ingress_address = hookenv.ingress_address(event.relation.id, hookenv.local_unit())
-
-        event.relation.data[self.unit].update({
-            'hostname': ingress_address,
-            'private-address': ingress_address,
-            'port': str(port)
-        })
+        address = None
+        binding = self.model.get_binding(event.relation)
+        if binding:
+            address = binding.network.ingress_address
+            event.relation.data[self.unit].update({
+                'hostname': address,
+                'private-address': address,
+                'port': str(port)
+            })
 
 
 def api_port():
