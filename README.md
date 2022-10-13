@@ -2,23 +2,36 @@
 
 ## Description
 
-The Juju controller hosts and manages Juju models.
+The Juju controller charm allows charms to interact with the Juju controller
+via integrations. This charm is automatically deployed in the `controller`
+model of every controller for Juju 3.0 or later.
 
 ## Usage
 
-The controller provides an endpoint to integrate with a dashboard.
+The controller charm currently supports integrations with
+[`juju-dashboard`](https://charmhub.io/juju-dashboard) and
+[`haproxy`](https://charmhub.io/haproxy).
 
-## Developing
+You can deploy the Juju Dashboard in the `controller` model:
+```console
+$ juju switch controller
+$ juju deploy juju-dashboard --channel beta
+$ juju integrate controller juju-dashboard
+```
 
-Create and activate a virtualenv with the development requirements:
+or you can deploy it in its own model, and connect to the controller charm via
+a cross-model integration:
+```console
+$ juju add-model dashboard
+$ juju deploy juju-dashboard --channel beta
+$ juju offer juju-dashboard:controller
+Application "juju-dashboard" endpoints [controller] available at "admin/dashboard.juju-dashboard"
+$ juju switch controller
+$ juju integrate controller admin/dashboard.juju-dashboard
+```
 
-    virtualenv -p python3 venv
-    source venv/bin/activate
-    pip install -r requirements-dev.txt
-
-## Testing
-
-The Python operator framework includes a very nice harness for testing
-operator behaviour without full deployment. Just `run_tests`:
-
-    ./run_tests
+Then, run
+```
+juju dashboard --browser
+```
+and log in using the printed credentials.
