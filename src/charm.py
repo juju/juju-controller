@@ -36,13 +36,12 @@ class JujuControllerCharm(CharmBase):
 
     def _on_dashboard_relation_joined(self, event):
         logger.info("got a new dashboard relation: %r", event)
-
-        event.relation.data[self.app].update({
-            'controller-url': self.config['controller-url'],
-            'identity-provider-url': self.config['identity-provider-url'],
-            'is-juju': str(self.config['is-juju']),
-        })
-
+        if self.unit.is_leader():
+            event.relation.data[self.app].update({
+                'controller-url': self.config['controller-url'],
+                'identity-provider-url': self.config['identity-provider-url'],
+                'is-juju': str(self.config['is-juju']),
+            })
         # TODO: do we need to poke something on the controller so that the `juju
         # dashboard` command will work?
 
@@ -59,11 +58,12 @@ class JujuControllerCharm(CharmBase):
         binding = self.model.get_binding(event.relation)
         if binding:
             address = binding.network.ingress_address
-            event.relation.data[self.unit].update({
-                'hostname': address,
-                'private-address': address,
-                'port': str(port)
-            })
+            if self.unit.is_leader():
+                event.relation.data[self.unit].update({
+                    'hostname': str(address),
+                    'private-address': str(address),
+                    'port': str(port)
+                })
 
 
 def api_port():
