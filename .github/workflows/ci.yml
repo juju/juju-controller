@@ -18,20 +18,62 @@ jobs:
       run: |
         python3 --version
         sudo snap install charmcraft --classic
-        sudo snap refresh lxd --channel latest/stable
 
     - name: Set up LXD
-      run: |
-        sudo lxd waitready
-        sudo lxd init --auto
-        sudo chmod a+wr /var/snap/lxd/common/lxd/unix.socket
+      uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
 
     - name: Pack charm
       run: |
         charmcraft pack -v
 
     - name: Upload packed charm as artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: charm
         path: '*.charm'
+
+  bootstrap:
+    name: "Bootstrap"
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      CHARM_PATH: ${{ github.workspace }}/controller.charm
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO: test bootstrap on microk8s
+        # Currently we don't have an easy way to deploy a custom controller
+        # charm on k8s - it needs to be uploaded to Charmhub first.
+        cloud: ["lxd"]
+
+    steps:
+    - name: Download packed charm
+      id: download
+      uses: actions/download-artifact@v3
+      with:
+        name: charm
+
+    - name: Rename charm file
+      run: |
+        mv ${{ steps.download.outputs.download-path }}/*.charm $CHARM_PATH
+
+    - name: Set up LXD
+      if: matrix.cloud == 'lxd'
+      uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
+
+    - name: Install Juju
+      run: |
+        sudo snap install juju --channel 3.0/stable
+
+    - name: Bootstrap
+      run: |
+        set -euxo pipefail
+
+        juju bootstrap ${{ matrix.cloud }} c \
+          --controller-charm-path=$CHARM_PATH
+
+        juju switch controller
+        juju wait-for application controller --timeout 1m
+        juju status
+
+    # TODO: test integration with dashboard / ha-proxy
