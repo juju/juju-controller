@@ -36,15 +36,14 @@ jobs:
     name: "Bootstrap"
     runs-on: ubuntu-latest
     needs: build
-    env:
-      CHARM_PATH: ${{ github.workspace }}/controller.charm
     strategy:
       fail-fast: false
       matrix:
-        # TODO: test bootstrap on microk8s
-        # Currently we don't have an easy way to deploy a custom controller
-        # charm on k8s - it needs to be uploaded to Charmhub first.
-        cloud: ["lxd"]
+        cloud: ["lxd", "microk8s"]
+    env:
+      LOCAL_CHARM_PATH: ${{ github.workspace }}/controller.charm
+      CHARMHUB_NAME: juju-qa-controller
+      CHARMHUB_CHANNEL: latest/edge/${{ github.run_id }}
 
     steps:
     - name: Download packed charm
@@ -55,23 +54,51 @@ jobs:
 
     - name: Rename charm file
       run: |
-        mv ${{ steps.download.outputs.download-path }}/*.charm $CHARM_PATH
+        mv ${{ steps.download.outputs.download-path }}/*.charm \
+          $LOCAL_CHARM_PATH
+
+      # Currently the only way to get charms on k8s is via Charmhub.
+    - name: Upload charm to Charmhub
+      if: matrix.cloud == 'microk8s'
+      env:
+        CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
+      run: |
+        sudo snap install charmcraft --classic
+        charmcraft upload $LOCAL_CHARM_PATH \
+          --name $CHARMHUB_NAME --release $CHARMHUB_CHANNEL
 
     - name: Set up LXD
       if: matrix.cloud == 'lxd'
       uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
 
+    - name: Set up MicroK8s
+      if: matrix.cloud == 'microk8s'
+      uses: balchua/microk8s-actions@v0.3.1
+      with:
+        channel: "1.25-strict/stable"
+        addons: '["dns", "hostpath-storage"]'
+
     - name: Install Juju
       run: |
         sudo snap install juju --channel 3.0/stable
 
-    - name: Bootstrap
+    - name: Bootstrap on LXD
+      if: matrix.cloud == 'lxd'
       run: |
-        set -euxo pipefail
+        juju bootstrap lxd c \
+          --controller-charm-path=$LOCAL_CHARM_PATH
 
-        juju bootstrap ${{ matrix.cloud }} c \
-          --controller-charm-path=$CHARM_PATH
+    - name: Bootstrap on MicroK8s
+      if: matrix.cloud == 'microk8s'
+      run: |
+        sg snap_microk8s <<EOF
+          juju bootstrap microk8s c \
+            --controller-charm-path=$CHARMHUB_NAME \
+            --controller-charm-channel=$CHARMHUB_CHANNEL
+        EOF
 
+    - name: Check charm status
+      run: |
         juju switch controller
         juju wait-for application controller --timeout 1m
         juju status
