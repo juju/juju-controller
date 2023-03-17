@@ -4,13 +4,14 @@
 
 import logging
 import os
+import secrets
 
 import yaml
-# from charmhelpers.core import hookenv
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,13 @@ class JujuControllerCharm(CharmBase):
             self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
+
+        # Set up Prometheus integration
+        self.metrics_endpoint = MetricsEndpointProvider(self)
+        self.framework.observe(
+            self.on.metrics_endpoint_relation_joined, self._on_metrics_endpoint_relation_joined)
+        self.framework.observe(
+            self.on.metrics_endpoint_relation_departed, self._on_metrics_endpoint_relation_departed)
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
@@ -65,11 +73,41 @@ class JujuControllerCharm(CharmBase):
                     'port': str(port)
                 })
 
+    def _on_metrics_endpoint_relation_joined(self, event):
+        # Add new user to access metrics
+        username = metrics_username(event.relation)
+        password = secrets.token_urlsafe(16)
+        # juju add-user juju-metrics-<relation-id>
+        # juju change-user-password prometheus
+        # juju grant prometheus read controller
 
-def api_port():
-    ''' api_port determines the port that the controller's API server is
-        listening on.  If the machine does not appear to be a juju
-        controller then None is returned.
+        self.metrics_endpoint.update_scrape_job_spec([{
+            "job_name": "juju",
+            "metrics_path": "/introspection/metrics",
+            "scheme": "https",
+            "static_configs": [{"targets": ["*:17070"]}],
+            "basic_auth": {
+                "username": username,
+                "password": password,
+            },
+            "tls_config": {
+                "ca_file": ca_cert(),
+                "server_name": "juju-apiserver",
+            },
+        }])
+        
+    def _on_metrics_endpoint_relation_departed(self, event):
+        # Remove metrics user
+        username = metrics_username(event.relation)
+        remove_user(username)
+        self.metrics_endpoint.update_scrape_job_spec(None)
+
+
+def _agent_conf(key: str):
+    '''
+    _agent_conf reads a value from the agent.conf file on disk.
+    If the machine does not appear to be a Juju controller, then None is
+    returned.
     '''
     machine = os.getenv('JUJU_MACHINE_ID')
     if machine is None:
@@ -77,8 +115,26 @@ def api_port():
     path = '/var/lib/juju/agents/machine-{}/agent.conf'.format(machine)
     with open(path) as f:
         params = yaml.safe_load(f)
-    return params.get('apiport')
+    return params.get(key)
 
+def api_port() -> str:
+    '''
+    api_port returns the port on which the controller API server is listening.
+    '''
+    return _agent_conf('apiport')
+
+def ca_cert() -> str:
+    '''
+    ca_cert returns the controller's CA certificate.
+    '''
+    return _agent_conf('cacert')
+
+def metrics_username(relation) -> str:
+    '''
+    metrics_username returns the username used to access the metrics endpoint,
+    for the given relation.
+    '''
+    return f'juju-metrics-{relation.id}'
 
 if __name__ == "__main__":
     main(JujuControllerCharm)
