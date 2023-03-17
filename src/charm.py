@@ -2,15 +2,16 @@
 # Copyright 2021 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 
+import controlsocket
 import logging
-import os
-
+import secrets
 import yaml
-# from charmhelpers.core import hookenv
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops.charm import CharmBase
 from ops.framework import StoredState
+from ops.charm import RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus
+from ops.model import ActiveStatus, BlockedStatus, Relation
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,13 @@ class JujuControllerCharm(CharmBase):
             self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
+
+        self.control_socket = controlsocket.Client(
+            socket_path="/var/lib/juju/control.socket")
+        self.framework.observe(
+            self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
+        self.framework.observe(
+            self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
@@ -48,7 +56,7 @@ class JujuControllerCharm(CharmBase):
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
         logger.info("got a new website relation: %r", event)
-        port = api_port()
+        port = self.api_port()
         if port is None:
             logger.error("machine does not appear to be a controller")
             self.unit.status = BlockedStatus('machine does not appear to be a controller')
@@ -65,19 +73,67 @@ class JujuControllerCharm(CharmBase):
                     'port': str(port)
                 })
 
+    def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
+        username = metrics_username(event.relation)
+        password = generate_password()
+        self.control_socket.add_metrics_user(username, password)
 
-def api_port():
-    ''' api_port determines the port that the controller's API server is
-        listening on.  If the machine does not appear to be a juju
-        controller then None is returned.
-    '''
-    machine = os.getenv('JUJU_MACHINE_ID')
-    if machine is None:
-        return None
-    path = '/var/lib/juju/agents/machine-{}/agent.conf'.format(machine)
-    with open(path) as f:
-        params = yaml.safe_load(f)
-    return params.get('apiport')
+        # Set up Prometheus scrape config
+        metrics_endpoint = MetricsEndpointProvider(
+            self,
+            jobs=[{
+                "metrics_path": "/introspection/metrics",
+                "scheme": "https",
+                "static_configs": [{
+                    "targets": [
+                        f'*:{self.api_port()}'
+                    ]
+                }],
+                "basic_auth": {
+                    "username": f'user-{username}',
+                    "password": password,
+                },
+                "tls_config": {
+                    "ca_file": self.ca_cert(),
+                    "server_name": "juju-apiserver",
+                },
+            }],
+        )
+        metrics_endpoint.set_scrape_job_spec()
+
+    def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
+        username = metrics_username(event.relation)
+        self.control_socket.remove_metrics_user(username)
+
+    def _agent_conf(self, key: str):
+        """Read a value (by key) from the agent.conf file on disk."""
+        unit_name = self.unit.name.replace('/', '-')
+        agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
+
+        with open(agent_conf_path) as agent_conf_file:
+            agent_conf = yaml.safe_load(agent_conf_file)
+            return agent_conf.get(key)
+
+    def api_port(self) -> str:
+        """Return the port on which the controller API server is listening."""
+        return self._agent_conf('apiport')
+
+    def ca_cert(self) -> str:
+        """Return the controller's CA certificate."""
+        return self._agent_conf('cacert')
+
+
+def metrics_username(relation: Relation) -> str:
+    """
+    Return the username used to access the metrics endpoint, for the given
+    relation. This username has the form
+        juju-metrics-r1
+    """
+    return f'juju-metrics-r{relation.id}'
+
+
+def generate_password() -> str:
+    return secrets.token_urlsafe(16)
 
 
 if __name__ == "__main__":
