@@ -5,7 +5,7 @@
 import logging
 import os
 import secrets
-
+import subprocess
 import yaml
 from ops.charm import CharmBase
 from ops.framework import StoredState
@@ -77,9 +77,7 @@ class JujuControllerCharm(CharmBase):
         # Add new user to access metrics
         username = metrics_username(event.relation)
         password = secrets.token_urlsafe(16)
-        # juju add-user juju-metrics-<relation-id>
-        # juju change-user-password prometheus
-        # juju grant prometheus read controller
+        add_metrics_user(username, password)
 
         self.metrics_endpoint.update_scrape_job_spec([{
             "job_name": "juju",
@@ -135,6 +133,30 @@ def metrics_username(relation) -> str:
     for the given relation.
     '''
     return f'juju-metrics-{relation.id}'
+
+def _introspect(command: str):
+    '''
+    Runs an introspection command inside the controller machine.
+    '''
+    subprocess.run(
+        f"source /etc/profile.d/juju-introspection.sh && {command}",
+        shell=True,
+        executable="/bin/bash"
+    )
+    
+def add_metrics_user(username: str, password: str):
+    '''
+    Runs the following introspection command:
+        juju_add_metrics_user <username> <password>
+    '''
+    _introspect(f"juju_add_metrics_user {username} {password}")
+
+def remove_user(username: str):
+    '''
+    Runs the following introspection command:
+        juju_remove_user <username>
+    '''
+    _introspect(f"juju_remove_user {username}")
 
 if __name__ == "__main__":
     main(JujuControllerCharm)
