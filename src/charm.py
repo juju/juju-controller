@@ -29,6 +29,8 @@ class JujuControllerCharm(CharmBase):
             self.on.website_relation_joined, self._on_website_relation_joined)
 
         # Set up Prometheus integration
+        # TODO: this is being run on every hook invocation and resetting the
+        # scrape config. Find a way to persist the jobspec between hooks.
         self.metrics_endpoint = MetricsEndpointProvider(self)
         self.framework.observe(
             self.on.metrics_endpoint_relation_joined, self._on_metrics_endpoint_relation_joined)
