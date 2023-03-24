@@ -97,8 +97,8 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_endpoint_relation_departed(self, event):
         # Remove metrics user
         username = metrics_username(event.relation)
-        remove_user(username)
-        self.metrics_endpoint.update_scrape_job_spec(None)
+        remove_metrics_user(username)
+        self.metrics_endpoint.update_scrape_job_spec([])
 
 
 def _agent_conf(key: str):
@@ -152,12 +152,12 @@ def add_metrics_user(username: str, password: str):
     '''
     _introspect(f"juju_add_metrics_user {username} {password}")
 
-def remove_user(username: str):
+def remove_metrics_user(username: str):
     '''
     Runs the following introspection command:
-        juju_remove_user <username>
+        juju_remove_metrics_user <username>
     '''
-    _introspect(f"juju_remove_user {username}")
+    _introspect(f"juju_remove_metrics_user {username}")
 
 if __name__ == "__main__":
     main(JujuControllerCharm)
