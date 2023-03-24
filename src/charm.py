@@ -107,10 +107,8 @@ def _agent_conf(key: str):
     If the machine does not appear to be a Juju controller, then None is
     returned.
     '''
-    machine = os.getenv('JUJU_MACHINE_ID')
-    if machine is None:
-        return None
-    path = '/var/lib/juju/agents/machine-{}/agent.conf'.format(machine)
+    # TODO: get the unit number/name from an environment variable?
+    path = '/var/lib/juju/agents/unit-controller-0/agent.conf'
     with open(path) as f:
         params = yaml.safe_load(f)
     return params.get(key)
@@ -138,11 +136,14 @@ def _introspect(command: str):
     '''
     Runs an introspection command inside the controller machine.
     '''
-    subprocess.run(
+    logger.info(f'running introspect command {command}')
+    result = subprocess.run(
         f"source /etc/profile.d/juju-introspection.sh && {command}",
         shell=True,
-        executable="/bin/bash"
+        executable="/bin/bash",
+        stdout=subprocess.PIPE,
     )
+    logger.info(f'stdout: {result.stdout}')
     
 def add_metrics_user(username: str, password: str):
     '''
