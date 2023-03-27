@@ -29,9 +29,11 @@ class JujuControllerCharm(CharmBase):
             self.on.website_relation_joined, self._on_website_relation_joined)
 
         # Set up Prometheus integration
-        # TODO: this is being run on every hook invocation and resetting the
-        # scrape config. Find a way to persist the jobspec between hooks.
-        self.metrics_endpoint = MetricsEndpointProvider(self)
+        # Store user credentials used to access Juju's metrics endpoint.
+        self._stored.set_default(metrics_users=dict())
+        self.metrics_endpoint = MetricsEndpointProvider(self,
+            jobs = self._prometheus_jobs()
+        )
         self.framework.observe(
             self.on.metrics_endpoint_relation_joined, self._on_metrics_endpoint_relation_joined)
         self.framework.observe(
@@ -80,27 +82,38 @@ class JujuControllerCharm(CharmBase):
         username = metrics_username(event.relation)
         password = secrets.token_urlsafe(16)
         add_metrics_user(username, password)
-
-        self.metrics_endpoint.update_scrape_job_spec([{
-            "job_name": "juju",
-            "metrics_path": "/introspection/metrics",
-            "scheme": "https",
-            "static_configs": [{"targets": ["*:17070"]}],
-            "basic_auth": {
-                "username": username,
-                "password": password,
-            },
-            "tls_config": {
-                "ca_file": ca_cert(),
-                "server_name": "juju-apiserver",
-            },
-        }])
+        self._stored.metrics_users[username] = password
+        self.metrics_endpoint.update_scrape_job_spec(self._prometheus_jobs())
         
     def _on_metrics_endpoint_relation_departed(self, event):
         # Remove metrics user
         username = metrics_username(event.relation)
         remove_metrics_user(username)
-        self.metrics_endpoint.update_scrape_job_spec([])
+        del self._stored.metrics_users[username]
+        self.metrics_endpoint.update_scrape_job_spec(self._prometheus_jobs())
+
+    def _prometheus_jobs(self):
+        '''
+        Generates scrape configs for Prometheus based on the metrics_users
+        in stored state.
+        '''
+        jobs = []
+        for username, password in self._stored.metrics_users.items():
+            jobs.append({
+                "job_name": "juju",
+                "metrics_path": "/introspection/metrics",
+                "scheme": "https",
+                "static_configs": [{"targets": ["*:17070"]}],
+                "basic_auth": {
+                    "username": f'user-{username}',
+                    "password": password,
+                },
+                "tls_config": {
+                    "ca_file": ca_cert(),
+                    "server_name": "juju-apiserver",
+                },
+            })
+        return jobs
 
 
 def _agent_conf(key: str):
