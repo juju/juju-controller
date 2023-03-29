@@ -7,30 +7,10 @@ on:
 jobs:
 
   build:
-    name: "Build"
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Install dependencies
-      run: |
-        python3 --version
-        sudo snap install charmcraft --classic
-
-    - name: Set up LXD
-      uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
-
-    - name: Pack charm
-      run: |
-        charmcraft pack -v
-
-    - name: Upload packed charm as artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: charm
-        path: '*.charm'
+    name: Build charms
+    uses: canonical/data-platform-workflows/.github/workflows/build_charms_with_cache.yaml@v1
+    with:
+      artifact-name: charm-packed
 
   bootstrap:
     name: "Bootstrap"
@@ -50,7 +30,7 @@ jobs:
       id: download
       uses: actions/download-artifact@v3
       with:
-        name: charm
+        name: ${{ needs.build.outputs.artifact-name }}
 
     - name: Rename charm file
       run: |
