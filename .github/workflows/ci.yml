@@ -59,6 +59,7 @@ jobs:
 
       # Currently the only way to get charms on k8s is via Charmhub.
     - name: Upload charm to Charmhub
+      id: charmcraft
       if: matrix.cloud == 'microk8s'
       env:
         CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
@@ -66,6 +67,14 @@ jobs:
         sudo snap install charmcraft --classic
         charmcraft upload $LOCAL_CHARM_PATH \
           --name $CHARMHUB_NAME --release $CHARMHUB_CHANNEL
+
+    - name: Save charmcraft logs as artifact
+      if: always() && steps.charmcraft.outcome != 'skipped'
+      uses: actions/upload-artifact@v3
+      with:
+        name: charmcraft-upload-logs
+        path: ~/.local/state/charmcraft/log/
+      continue-on-error: true
 
     - name: Set up LXD
       if: matrix.cloud == 'lxd'
