@@ -8,6 +8,7 @@ description: |
   of functionality of a Juju controller.
 summary: |
   The Juju controller.
+docs: https://discourse.charmhub.io/t/10534
 provides:
   dashboard:
     interface: juju-dashboard
