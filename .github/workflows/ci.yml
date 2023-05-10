@@ -122,7 +122,7 @@ jobs:
         esac
         echo "track=$TRACK" >> "$GITHUB_OUTPUT"
         
-        if [[ -z $CHANNEL ]]; then
+        if [[ -z $TRACK ]]; then
           echo "upload=false" >> "$GITHUB_OUTPUT"
         else
           echo "upload=true" >> "$GITHUB_OUTPUT"
