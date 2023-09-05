@@ -76,7 +76,7 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
         # Ensure that user credentials exist to access the metrics endpoint.
         # We've done it this way because it's possible for this hook to run twice.
-        logger.info(f'relation data: {event.relation.data[self.unit]}')
+        logger.debug(f'relation data: {event.relation.data[self.unit]}')
         username = metrics_username(event.relation, self.unit)
         password = ensure_metrics_user(username, event.relation.data[self.unit])
 
@@ -176,7 +176,7 @@ def _introspect(command: str):
         )
     except BaseException as e:
         logger.error(f"introspect command failed: {e}", exc_info=1)
-    logger.info(f'stdout: {result.stdout}')
+    logger.info(f'result of introspection command: {result.stdout}')
     
 def _add_metrics_user(username: str, password: str):
     '''
