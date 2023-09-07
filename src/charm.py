@@ -3,7 +3,6 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import logging
-import os
 import secrets
 import subprocess
 import yaml
@@ -74,11 +73,9 @@ class JujuControllerCharm(CharmBase):
                 })
 
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
-        # Ensure that user credentials exist to access the metrics endpoint.
-        # We've done it this way because it's possible for this hook to run twice.
-        logger.debug(f'relation data: {event.relation.data[self.unit]}')
         username = metrics_username(event.relation, self.unit)
-        password = ensure_metrics_user(username, event.relation.data[self.unit])
+        password = secrets.token_urlsafe(16)
+        add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
         self.metrics_endpoint = MetricsEndpointProvider(self,
@@ -103,31 +100,6 @@ class JujuControllerCharm(CharmBase):
         # Remove metrics user
         username = metrics_username(event.relation, self.unit)
         remove_metrics_user(username)
-        
-        # self.metrics_endpoint.update_scrape_job_spec(self._prometheus_jobs())
-
-    def _prometheus_jobs(self):
-        '''
-        Generates scrape configs for Prometheus based on the metrics_users
-        in stored state.
-        '''
-        jobs = []
-        for username, password in self._stored.metrics_users.items():
-            jobs.append({
-                "job_name": "juju",
-                "metrics_path": "/introspection/metrics",
-                "scheme": "https",
-                "static_configs": [{"targets": ["*:17070"]}],
-                "basic_auth": {
-                    "username": f'user-{username}',
-                    "password": password,
-                },
-                "tls_config": {
-                    "ca_file": ca_cert(),
-                    "server_name": "juju-apiserver",
-                },
-            })
-        return jobs
 
 
 def _agent_conf(key: str):
@@ -174,39 +146,17 @@ def _introspect(command: str):
             executable="/bin/bash",
             stdout=subprocess.PIPE,
         )
+        logger.info(f'result of introspection command: {result.stdout}')
     except BaseException as e:
         logger.error(f"introspect command failed: {e}", exc_info=1)
-    logger.info(f'result of introspection command: {result.stdout}')
     
-def _add_metrics_user(username: str, password: str):
+def add_metrics_user(username: str, password: str):
     '''
     Runs the following introspection command:
         juju_add_metrics_user <username> <password>
     '''
     logger.info(f'adding metrics user {username}')
     _introspect(f"juju_add_metrics_user {username} {password}")
-
-def ensure_metrics_user(username: str, relation_data: MutableMapping[str, str]) -> str:
-    '''
-    Ensures a metrics user with the given username exists.
-    If the user exists, return their password as stored in relation data.
-    If not, create the new user via the introspection endpoint, store their
-    password in relation data, and return the new password.
-    This function is idempotent.
-    ''' 
-    metrics_password_key = "metrics_password"
-
-    # Check if user exists in relation data
-    if metrics_password_key in relation_data:
-        logger.debug(f'metrics user password found in relation data')
-        return relation_data[metrics_password_key]
-    
-    # Create new user
-    logger.debug(f'no password found in relation data, creating new metrics user')
-    password = secrets.token_urlsafe(16)
-    _add_metrics_user(username, password)
-    relation_data[metrics_password_key] = password
-    return password
 
 def remove_metrics_user(username: str):
     '''
