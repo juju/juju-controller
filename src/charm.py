@@ -73,7 +73,7 @@ class JujuControllerCharm(CharmBase):
                 })
 
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
-        username = metrics_username(event.relation, self.unit)
+        username = metrics_username(event.relation)
         password = secrets.token_urlsafe(16)
         add_metrics_user(username, password)
 
@@ -98,7 +98,7 @@ class JujuControllerCharm(CharmBase):
         
     def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
         # Remove metrics user
-        username = metrics_username(event.relation, self.unit)
+        username = metrics_username(event.relation)
         remove_metrics_user(username)
 
 
@@ -126,14 +126,13 @@ def ca_cert() -> str:
     '''
     return _agent_conf('cacert')
 
-def metrics_username(relation: Relation, unit: Unit) -> str:
+def metrics_username(relation: Relation) -> str:
     '''
     metrics_username returns the username used to access the metrics endpoint,
-    for the given relation and unit. This username has the form
-        juju-metrics-u0-r1
+    for the given relation. This username has the form
+        juju-metrics-r1
     '''
-    unit_number = unit.name.split('/')[1]
-    return f'juju-metrics-u{unit_number}-r{relation.id}'
+    return f'juju-metrics-r{relation.id}'
 
 def _introspect(command: str):
     '''
