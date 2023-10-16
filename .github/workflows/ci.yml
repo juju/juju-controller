@@ -69,7 +69,7 @@ jobs:
 
     - name: Install Juju
       run: |
-        sudo snap install juju --channel 3.2/stable
+        sudo snap install juju --channel 3.3/beta
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
