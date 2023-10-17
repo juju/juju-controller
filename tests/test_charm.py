@@ -42,6 +42,7 @@ class TestCharm(unittest.TestCase):
         harness = Harness(JujuControllerCharm)
         self.addCleanup(harness.cleanup)
         harness.begin()
+        harness.set_leader()
         relation_id = harness.add_relation('website', 'haproxy')
         harness.add_relation_unit(relation_id, 'haproxy/0')
 
