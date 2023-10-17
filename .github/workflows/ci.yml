@@ -6,8 +6,29 @@ on:
 
 jobs:
 
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+
+    - name: Install dependencies for testing
+      run: |
+        pip install -r requirements-dev.txt
+
+    - name: Run tests
+      run: |
+        ./run_tests
+
+
   build:
     name: Build charms
+    needs: unit-tests
     uses: canonical/data-platform-workflows/.github/workflows/build_charms_with_cache.yaml@v4
     with:
       artifact-name: charm-packed
