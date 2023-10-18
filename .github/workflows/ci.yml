@@ -185,6 +185,7 @@ jobs:
       env:
         CHANNEL: ${{ needs.channel.outputs.test }}
       run: |
+        set -x
         TRACK=$(echo $CHANNEL | cut -d '/' -f 1)
         REVISION=$(charmcraft status $CHARM_NAME --format json |
            jq ".[] | select(.track == \"$TRACK\") | .mappings[0].releases[] | select(.channel == \"$CHANNEL\") | .revision")
