@@ -156,6 +156,7 @@ jobs:
       run: |
         sg snap_microk8s <<EOF
           juju bootstrap microk8s c \
+            --controller-charm-path=$CHARM_NAME
             --controller-charm-channel=${{ needs.channel.outputs.test }}
         EOF
 
