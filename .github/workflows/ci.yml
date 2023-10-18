@@ -179,9 +179,13 @@ jobs:
 
     - name: Get uploaded revision
       id: revision
+      env:
+        CHANNEL: ${{ needs.channel.outputs.test }}
       run: |
-        charmcraft status $CHARM_NAME --format json |
-          jq ${{ needs.channel.outputs.release }} ...
+        TRACK=$(echo $CHANNEL | cut -d '/' -f 1)
+        REVISION=$(charmcraft status $CHARM_NAME --format json |
+           jq ".[] | select(.track == \"$TRACK\") | .mappings[0].releases[] | select(.channel == \"$CHANNEL\") | .revision")
+        echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
     - name: Release to edge
       if: github.event_name == 'push' && needs.channel.outputs.release != ''
