@@ -3,6 +3,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+env:
+  CHARM_NAME: ${{ vars.CHARM_NAME }}
 
 jobs:
 
@@ -82,6 +84,7 @@ jobs:
         run: |
           sudo snap install charmcraft --classic
           charmcraft upload ${{ steps.download.outputs.download-path }}/*.charm \
+            --name $CHARM_NAME \
             --release ${{ needs.channel.outputs.test }}
 
 
@@ -107,17 +110,6 @@ jobs:
       run: |
         mv ${{ steps.download.outputs.download-path }}/*.charm \
           $LOCAL_CHARM_PATH
-
-      # Currently the only way to get charms on k8s is via Charmhub.
-    - name: Upload charm to Charmhub
-      id: charmcraft
-      if: matrix.cloud == 'microk8s'
-      env:
-        CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
-      run: |
-        sudo snap install charmcraft --classic
-        charmcraft upload $LOCAL_CHARM_PATH \
-          --name $CHARMHUB_NAME --release $CHARMHUB_CHANNEL
 
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
@@ -182,12 +174,12 @@ jobs:
     - name: Get uploaded revision
       id: revision
       run: |
-        charmcraft status juju-controller --format json |
+        charmcraft status $CHARM_NAME --format json |
           jq ${{ needs.channel.outputs.release }} ...
 
     - name: Release to edge
       if: github.event_name == 'push'
       run: |
-        charmcraft release juju-controller \
+        charmcraft release $CHARM_NAME \
           --revision=${{ steps.revision.outputs.revision }}
           --channel=${{ needs.channel.outputs.release }}
