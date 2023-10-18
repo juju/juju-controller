@@ -52,9 +52,15 @@ jobs:
         case ${{ github.ref_name }} in
           3.* | 4.*)
             TRACK="${{ github.ref_name }}"
+            DO_RELEASE=true
+            ;;
+          main)
+            TRACK="latest"
+            DO_RELEASE=true
             ;;
           *)
             TRACK="latest"
+            DO_RELEASE=false  # Don't release feature branches
             ;;
         esac
         
@@ -63,7 +69,9 @@ jobs:
         BRANCH="${{ github.ref_name }}-${{ github.sha }}"
         
         echo "test=$TRACK/edge/$BRANCH" >> "$GITHUB_OUTPUT"
-        echo "release=$TRACK/edge" >> "$GITHUB_OUTPUT"
+        if [[ "$DO_RELEASE" == 'true' ]]; then
+          echo "release=$TRACK/edge" >> "$GITHUB_OUTPUT"
+        fi
 
 
   upload:
@@ -169,8 +177,6 @@ jobs:
       run: |
         sudo snap install charmcraft --classic
 
-      # TODO: check if track exists, otherwise don't upload
-
     - name: Get uploaded revision
       id: revision
       run: |
@@ -178,7 +184,7 @@ jobs:
           jq ${{ needs.channel.outputs.release }} ...
 
     - name: Release to edge
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && needs.channel.outputs.release != ''
       run: |
         charmcraft release $CHARM_NAME \
           --revision=${{ steps.revision.outputs.revision }}
