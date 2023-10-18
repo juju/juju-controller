@@ -46,17 +46,21 @@ jobs:
       id: channel
       shell: bash
       run: |
-        set -x
+        set -eux
         case ${{ github.ref_name }} in
           3.* | 4.*)
             TRACK="${{ github.ref_name }}"
             ;;
-          master)
+          *)
             TRACK="latest"
             ;;
         esac
         
-        echo "test=$TRACK/edge/${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        # Feature branches will be released to the 'latest' track, so we need
+        # to include the branch name to disambiguate.
+        BRANCH="${{ github.ref_name }}-${{ github.sha }}"
+        
+        echo "test=$TRACK/edge/$BRANCH" >> "$GITHUB_OUTPUT"
         echo "release=$TRACK/edge" >> "$GITHUB_OUTPUT"
 
 
@@ -172,6 +176,8 @@ jobs:
     - name: Install Charmcraft
       run: |
         sudo snap install charmcraft --classic
+
+      # TODO: check if track exists, otherwise don't upload
 
     - name: Get uploaded revision
       id: revision
