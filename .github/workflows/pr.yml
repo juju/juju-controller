@@ -7,7 +7,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo ${{ github.event }}
           if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "juju/juju-controller" ]]; then
             echo "::error::CI is unable to run on a PR opened from a fork. Please push your branch to the main repo and reopen this PR."
             exit 1
