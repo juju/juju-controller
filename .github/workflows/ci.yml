@@ -1,7 +1,10 @@
 name: "CI"
+# We don't run this workflow on 'pull_request', because we require secrets to
+# upload the charm to Charmhub, and pull_request runs can't access secrets.
+# PRs should be opened from a branch on the main juju/juju-controller repo,
+# not from a fork.
 on:
   push:
-  pull_request:
   workflow_dispatch:
 env:
   CHARM_NAME: ${{ vars.CHARM_NAME }}
