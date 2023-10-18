@@ -1,0 +1,10 @@
+name: "PR"
+on: [pull_request, workflow_dispatch]
+jobs:
+  fork:
+    # check PR is not running from a fork
+    name: Check head branch
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo ${{ github.head_ref }}
