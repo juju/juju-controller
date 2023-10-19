@@ -1,8 +1,13 @@
 name: "CI"
+# We don't run this workflow on 'pull_request', because we require secrets to
+# upload the charm to Charmhub, and pull_request runs can't access secrets.
+# PRs should be opened from a branch on the main juju/juju-controller repo,
+# not from a fork.
 on:
   push:
-  pull_request:
   workflow_dispatch:
+env:
+  CHARM_NAME: ${{ vars.CHARM_NAME }}
 
 jobs:
 
@@ -33,18 +38,77 @@ jobs:
     with:
       artifact-name: charm-packed
 
-  bootstrap:
-    name: "Bootstrap"
+
+  channel:
+    name: Select Charmhub channel
     runs-on: ubuntu-latest
-    needs: build
+    outputs:
+      test: ${{ steps.channel.outputs.test }}
+      release: ${{ steps.channel.outputs.release }}
+
+    steps:
+    - name: Select Charmhub channel
+      id: channel
+      shell: bash
+      run: |
+        set -eux
+        case ${{ github.ref_name }} in
+          3.* | 4.*)
+            TRACK="${{ github.ref_name }}"
+            DO_RELEASE=true
+            ;;
+          main)
+            TRACK="latest"
+            DO_RELEASE=true
+            ;;
+          *)
+            TRACK="latest"
+            DO_RELEASE=false  # Don't release feature branches
+            ;;
+        esac
+        
+        # Feature branches will be released to the 'latest' track, so we need
+        # to include the branch name to disambiguate.
+        BRANCH="${{ github.ref_name }}-${{ github.sha }}"
+        
+        echo "test=$TRACK/edge/$BRANCH" >> "$GITHUB_OUTPUT"
+        if [[ "$DO_RELEASE" == 'true' ]]; then
+          echo "release=$TRACK/edge" >> "$GITHUB_OUTPUT"
+        fi
+
+
+  upload:
+    name: Upload to Charmhub
+    needs: [build, channel]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packed charm
+        id: download
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      - name: Upload charm to Charmhub
+        env:
+          CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
+        run: |
+          sudo snap install charmcraft --classic
+          charmcraft upload ${{ steps.download.outputs.download-path }}/*.charm \
+            --name $CHARM_NAME \
+            --release ${{ needs.channel.outputs.test }}
+
+
+  integration:
+    name: "Integration tests"
+    runs-on: ubuntu-latest
+    needs: [build, upload, channel]
     strategy:
       fail-fast: false
       matrix:
         cloud: ["lxd", "microk8s"]
     env:
       LOCAL_CHARM_PATH: ${{ github.workspace }}/controller.charm
-      CHARMHUB_NAME: juju-qa-controller
-      CHARMHUB_CHANNEL: latest/edge/${{ github.run_id }}
 
     steps:
     - name: Download packed charm
@@ -57,17 +121,6 @@ jobs:
       run: |
         mv ${{ steps.download.outputs.download-path }}/*.charm \
           $LOCAL_CHARM_PATH
-
-      # Currently the only way to get charms on k8s is via Charmhub.
-    - name: Upload charm to Charmhub
-      id: charmcraft
-      if: matrix.cloud == 'microk8s'
-      env:
-        CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
-      run: |
-        sudo snap install charmcraft --classic
-        charmcraft upload $LOCAL_CHARM_PATH \
-          --name $CHARMHUB_NAME --release $CHARMHUB_CHANNEL
 
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
@@ -103,8 +156,8 @@ jobs:
       run: |
         sg snap_microk8s <<EOF
           juju bootstrap microk8s c \
-            --controller-charm-path=$CHARMHUB_NAME \
-            --controller-charm-channel=$CHARMHUB_CHANNEL
+            --controller-charm-path=$CHARM_NAME \
+            --controller-charm-channel=${{ needs.channel.outputs.test }}
         EOF
 
     - name: Check charm status
@@ -115,46 +168,33 @@ jobs:
 
     # TODO: test integration with dashboard / ha-proxy
 
+
   release:
     name: "Release to edge"
     runs-on: ubuntu-latest
-    needs: [build, bootstrap]
-    if: github.event_name == 'push'
+    needs: [upload, channel, integration]
+    env:
+      CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
 
     steps:
-    - name: Download packed charm
-      id: download
-      uses: actions/download-artifact@v3
-      with:
-        name: ${{ needs.build.outputs.artifact-name }}
-
-    - name: Select Charmhub channel
-      id: channel
-      shell: bash
-      run: |
-        set -x
-        case ${{ github.ref_name }} in
-          3.* | 4.*)
-            TRACK="${{ github.ref_name }}"
-            ;;
-          master)
-            TRACK="latest"
-            ;;
-        esac
-        echo "track=$TRACK" >> "$GITHUB_OUTPUT"
-        
-        if [[ -z $TRACK ]]; then
-          echo "upload=false" >> "$GITHUB_OUTPUT"
-        else
-          echo "upload=true" >> "$GITHUB_OUTPUT"
-        fi
-        
-
-    - name: Upload to Charmhub
-      if: steps.channel.outputs.upload == 'true'
-      env:
-        CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
+    - name: Install Charmcraft
       run: |
         sudo snap install charmcraft --classic
-        charmcraft upload ${{ steps.download.outputs.download-path }}/*.charm \
-          --release ${{ steps.channel.outputs.track }}/edge
+
+    - name: Get uploaded revision
+      id: revision
+      env:
+        CHANNEL: ${{ needs.channel.outputs.test }}
+      run: |
+        set -x
+        TRACK=$(echo $CHANNEL | cut -d '/' -f 1)
+        REVISION=$(charmcraft status $CHARM_NAME --format json |
+           jq ".[] | select(.track == \"$TRACK\") | .mappings[0].releases[] | select(.channel == \"$CHANNEL\") | .revision")
+        echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+
+    - name: Release to edge
+      if: github.event_name == 'push' && needs.channel.outputs.release != ''
+      run: |
+        charmcraft release $CHARM_NAME \
+          --revision=${{ steps.revision.outputs.revision }} \
+          --channel=${{ needs.channel.outputs.release }}
