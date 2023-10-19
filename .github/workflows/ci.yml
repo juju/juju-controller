@@ -166,6 +166,15 @@ jobs:
         juju wait-for application controller --timeout 1m
         juju status
 
+    - name: Get some info for debugging
+      if: failure()
+      run: |
+        set -x
+        set +e
+        juju status
+        juju status --format json
+        juju debug-log -m controller
+
     # TODO: test integration with dashboard / ha-proxy
 
 
