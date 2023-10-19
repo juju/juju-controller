@@ -55,6 +55,22 @@ $ juju bootstrap microk8s c \
 
 ## Releasing
 
+This PR includes a workflow which will automatically release new versions of the charm to the relevant `edge` channel.
+
+After QA'ing an `edge` release, you can promote it to the `stable` channel by getting the revision number and running `charmcraft release`:
+```console
+$ juju info juju-controller
+...
+3.1/edge:          44  2023-10-19  (44)  10MB
+
+$ charmcraft release juju-controller --revision 44 --channel 3.1/stable
+Revision 44 of charm 'juju-controller' released to 3.1/stable
+```
+
+### Manual release
+
+These instructions are kept around mostly for interest/reference.
+
 To release a new version of the controller charm, first pack the charm as above:
 ```console
 $ charmcraft pack
