@@ -3,13 +3,13 @@
 
 import os
 import unittest
-from unittest.mock import mock_open, patch
-
 from charm import JujuControllerCharm
 from ops.testing import Harness
+from unittest.mock import mock_open, patch
 
 agent_conf = '''
 apiport: 17070
+cacert: fake
 '''
 
 
@@ -36,8 +36,8 @@ class TestCharm(unittest.TestCase):
     })
     @patch("ops.model.Model.get_binding")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    def test_website_relation_joined(self, open, ingress_address):
-        ingress_address.return_value = mockBinding("192.168.1.17")
+    def test_website_relation_joined(self, _, ingress_address):
+        ingress_address.return_value = MockBinding("192.168.1.17")
 
         harness = Harness(JujuControllerCharm)
         self.addCleanup(harness.cleanup)
@@ -51,12 +51,49 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["private-address"], "192.168.1.17")
         self.assertEqual(data["port"], '17070')
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("charm.MetricsEndpointProvider", autospec=True)
+    @patch("charm.generate_password", new=lambda: "passwd")
+    @patch("controlsocket.Client.add_metrics_user")
+    @patch("controlsocket.Client.remove_metrics_user")
+    def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
+                                       mock_metrics_provider, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
 
-class mockBinding:
+        harness.add_network(address="192.168.1.17", endpoint="metrics-endpoint")
+
+        relation_id = harness.add_relation('metrics-endpoint', 'prometheus-k8s')
+        mock_add_user.assert_called_once_with(f'juju-metrics-r{relation_id}', 'passwd')
+
+        mock_metrics_provider.assert_called_once_with(
+            harness.charm,
+            jobs=[{
+                "metrics_path": "/introspection/metrics",
+                "scheme": "https",
+                "static_configs": [{"targets": ["*:17070"]}],
+                "basic_auth": {
+                    "username": f'user-juju-metrics-r{relation_id}',
+                    "password": 'passwd',
+                },
+                "tls_config": {
+                    "ca_file": 'fake',
+                    "server_name": "juju-apiserver",
+                },
+            }],
+        )
+        mock_metrics_provider.return_value.set_scrape_job_spec.assert_called_once()
+
+        harness.remove_relation(relation_id)
+        mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
+
+
+class MockBinding:
     def __init__(self, address):
-        self.network = mockNetwork(address)
+        self.network = MockNetwork(address)
 
 
-class mockNetwork:
+class MockNetwork:
     def __init__(self, address):
         self.ingress_address = address
