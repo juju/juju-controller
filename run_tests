@@ -6,11 +6,10 @@ if [ -z "$VIRTUAL_ENV" -a -d venv/ ]; then
     . venv/bin/activate
 fi
 
-if [ -z "$PYTHONPATH" ]; then
-    export PYTHONPATH=src
-else
-    export PYTHONPATH="src:$PYTHONPATH"
+if [ -n "$PYTHONPATH" ]; then
+    export PYTHONPATH=":$PYTHONPATH"
 fi
+export PYTHONPATH="src:lib$PYTHONPATH"
 
 flake8
 coverage run --source=src -m unittest -v "$@"
