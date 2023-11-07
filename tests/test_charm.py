@@ -3,12 +3,36 @@
 
 import os
 import unittest
-from charm import JujuControllerCharm
+from charm import JujuControllerCharm, AgentConfException
+from ops import ErrorStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
 agent_conf = '''
-apiport: 17070
+apiaddresses:
+- localhost:17070
+cacert: fake
+'''
+
+agent_conf_apiaddresses_missing = '''
+cacert: fake
+'''
+
+agent_conf_apiaddresses_not_list = '''
+apiaddresses:
+  foo: bar
+cacert: fake
+'''
+
+agent_conf_ipv4 = '''
+apiaddresses:
+- "127.0.0.1:17070"
+cacert: fake
+'''
+
+agent_conf_ipv6 = '''
+apiaddresses:
+- "[::1]:17070"
 cacert: fake
 '''
 
@@ -87,6 +111,54 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    def test_apiaddresses_missing(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        with self.assertRaisesRegex(AgentConfException, "agent.conf key 'apiaddresses' missing"):
+            harness.charm.api_port()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_not_list)
+    def test_apiaddresses_not_list(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        with self.assertRaisesRegex(
+            AgentConfException, "agent.conf key 'apiaddresses' is not a list"
+        ):
+            harness.charm.api_port()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    @patch("controlsocket.Client.add_metrics_user")
+    def test_apiaddresses_missing_status(self, *_):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        harness.add_relation('metrics-endpoint', 'prometheus-k8s')
+        self.assertEqual(harness.charm.unit.status, ErrorStatus(
+            "can't read controller API port from agent.conf: agent.conf key 'apiaddresses' missing"
+        ))
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
+    def test_apiaddresses_ipv4(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        self.assertEqual(harness.charm.api_port(), 17070)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
+    def test_apiaddresses_ipv6(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        self.assertEqual(harness.charm.api_port(), 17070)
 
 
 class MockBinding:
