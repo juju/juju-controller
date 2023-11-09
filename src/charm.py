@@ -5,13 +5,15 @@
 import controlsocket
 import logging
 import secrets
+import urllib.parse
 import yaml
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.charm import RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,12 @@ class JujuControllerCharm(CharmBase):
         self.control_socket.add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
+        try:
+            api_port = self.api_port()
+        except AgentConfException as e:
+            self.unit.status = ErrorStatus(f"can't read controller API port from agent.conf: {e}")
+            return
+
         metrics_endpoint = MetricsEndpointProvider(
             self,
             jobs=[{
@@ -86,7 +94,7 @@ class JujuControllerCharm(CharmBase):
                 "scheme": "https",
                 "static_configs": [{
                     "targets": [
-                        f'*:{self.api_port()}'
+                        f'*:{api_port}'
                     ]
                 }],
                 "basic_auth": {
@@ -116,7 +124,16 @@ class JujuControllerCharm(CharmBase):
 
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
-        return self._agent_conf('apiport')
+        api_addresses = self._agent_conf('apiaddresses')
+        if not api_addresses:
+            raise AgentConfException("agent.conf key 'apiaddresses' missing")
+        if not isinstance(api_addresses, List):
+            raise AgentConfException("agent.conf key 'apiaddresses' is not a list")
+
+        parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
+        if not parsed_url.port:
+            raise AgentConfException("api address doesn't include port")
+        return parsed_url.port
 
     def ca_cert(self) -> str:
         """Return the controller's CA certificate."""
@@ -134,6 +151,10 @@ def metrics_username(relation: Relation) -> str:
 
 def generate_password() -> str:
     return secrets.token_urlsafe(16)
+
+
+class AgentConfException(Exception):
+    """Raised when there are errors reading info from agent.conf."""
 
 
 if __name__ == "__main__":
