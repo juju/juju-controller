@@ -5,10 +5,14 @@
 import controlsocket
 import json
 import logging
+import os
 import secrets
 import urllib.parse
 import yaml
 
+from typing import (
+    Any, Optional,
+)
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
@@ -17,9 +21,27 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
 from pathlib import Path
 from typing import List
+from opentelemetry import trace
+from opentelemetry.trace import (
+    NonRecordingSpan,
+    SpanContext,
+    TraceFlags,
+)
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+)
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 logger = logging.getLogger(__name__)
 
+resource = Resource(
+    attributes={
+        "service.name": "juju-controller-charm",
+        "service.version": "4.0.0",
+    }
+)
 
 class JujuControllerCharm(CharmBase):
     DB_BIND_ADDR_KEY = 'db-bind-address'
@@ -29,6 +51,8 @@ class JujuControllerCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
+
+        self._setup_tracing()
 
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
@@ -51,27 +75,30 @@ class JujuControllerCharm(CharmBase):
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
 
     def _on_install(self, event: InstallEvent):
-        """Ensure that the controller configuration file exists."""
-        file_path = self._controller_config_path()
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        open(file_path, 'w+').close()
+        with self._tracer().start_as_current_span("_on_install", context=juju_span_context()):
+            """Ensure that the controller configuration file exists."""
+            file_path = self._controller_config_path()
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            open(file_path, 'w+').close()
 
     def _on_collect_status(self, event: CollectStatusEvent):
-        if len(self._stored.last_bind_addresses) > 1:
-            event.add_status(BlockedStatus(
-                'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
+        with self._tracer().start_as_current_span("_on_collect_status", context=juju_span_context()):
+            if len(self._stored.last_bind_addresses) > 1:
+                event.add_status(BlockedStatus(
+                    'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
-        try:
-            self.api_port()
-        except AgentConfException as e:
-            event.add_status(ErrorStatus(
-                f'cannot read controller API port from agent configuration: {e}'))
+            try:
+                self.api_port()
+            except AgentConfException as e:
+                event.add_status(ErrorStatus(
+                    f'cannot read controller API port from agent configuration: {e}'))
 
-        event.add_status(ActiveStatus())
+            event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
-        controller_url = self.config['controller-url']
-        logger.info('got a new controller-url: %r', controller_url)
+        with self._tracer().start_as_current_span("_on_config_changed", context=juju_span_context()):
+            controller_url = self.config['controller-url']
+            logger.info('got a new controller-url: %r', controller_url)
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
@@ -144,41 +171,42 @@ class JujuControllerCharm(CharmBase):
         self.control_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
-        """Maintain our own bind address in relation data.
-        If we are the leader, aggregate the bind addresses for all the peers,
-        and ensure the result is set in the application data bag.
-        If the aggregate addresses have changed, rewrite the config file.
-        """
-        relation = event.relation
-        self._ensure_db_bind_address(relation)
+        with self._tracer().start_as_current_span("_on_dbcluster_relation_changed", context=juju_span_context()):
+            """Maintain our own bind address in relation data.
+            If we are the leader, aggregate the bind addresses for all the peers,
+            and ensure the result is set in the application data bag.
+            If the aggregate addresses have changed, rewrite the config file.
+            """
+            relation = event.relation
+            self._ensure_db_bind_address(relation)
 
-        if self.unit.is_leader():
-            # The event only has *other* units so include this
-            # unit's bind address if we have managed to set it.
-            ip = self._stored.db_bind_address
-            all_bind_addresses = {self.unit.name: ip} if ip else dict()
+            if self.unit.is_leader():
+                # The event only has *other* units so include this
+                # unit's bind address if we have managed to set it.
+                ip = self._stored.db_bind_address
+                all_bind_addresses = {self.unit.name: ip} if ip else dict()
 
-            for unit in relation.units:
-                unit_data = relation.data[unit]
-                if self.DB_BIND_ADDR_KEY in unit_data:
-                    all_bind_addresses[unit.name] = unit_data[self.DB_BIND_ADDR_KEY]
+                for unit in relation.units:
+                    unit_data = relation.data[unit]
+                    if self.DB_BIND_ADDR_KEY in unit_data:
+                        all_bind_addresses[unit.name] = unit_data[self.DB_BIND_ADDR_KEY]
 
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
+                if self._stored.all_bind_addresses == all_bind_addresses:
+                    return
 
-            relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(all_bind_addresses)
-            self._update_config_file(all_bind_addresses)
-        else:
-            app_data = relation.data[self.app]
-            if self.ALL_BIND_ADDRS_KEY in app_data:
-                all_bind_addresses = json.loads(app_data[self.ALL_BIND_ADDRS_KEY])
+                relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(all_bind_addresses)
+                self._update_config_file(all_bind_addresses)
             else:
-                all_bind_addresses = dict()
+                app_data = relation.data[self.app]
+                if self.ALL_BIND_ADDRS_KEY in app_data:
+                    all_bind_addresses = json.loads(app_data[self.ALL_BIND_ADDRS_KEY])
+                else:
+                    all_bind_addresses = dict()
 
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
+                if self._stored.all_bind_addresses == all_bind_addresses:
+                    return
 
-            self._update_config_file(all_bind_addresses)
+                self._update_config_file(all_bind_addresses)
 
     def _ensure_db_bind_address(self, relation):
         """Ensure that a bind address for Dqlite is set in relation data,
@@ -216,7 +244,7 @@ class JujuControllerCharm(CharmBase):
 
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
-        api_addresses = self._agent_conf('apiaddresses')
+        api_addresses = self._agent_conf_key('apiaddresses')
         if not api_addresses:
             raise AgentConfException("agent.conf key 'apiaddresses' missing")
         if not isinstance(api_addresses, List):
@@ -229,20 +257,41 @@ class JujuControllerCharm(CharmBase):
 
     def ca_cert(self) -> str:
         """Return the controller's CA certificate."""
-        return self._agent_conf('cacert')
+        return self._agent_conf_key('cacert')
 
-    def _agent_conf(self, key: str):
+    def _agent_conf(self) -> dict:
         """Read a value (by key) from the agent.conf file on disk."""
         unit_name = self.unit.name.replace('/', '-')
         agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
 
         with open(agent_conf_path) as agent_conf_file:
-            agent_conf = yaml.safe_load(agent_conf_file)
-            return agent_conf.get(key)
+            return yaml.safe_load(agent_conf_file)
+
+    def _agent_conf_key(self, key: str) -> Any:
+        return self._agent_conf().get(key)
 
     def _controller_config_path(self) -> str:
         unit_num = self.unit.name.split('/')[1]
         return f'/var/lib/juju/agents/controller-{unit_num}/agent.conf'
+
+    def _setup_tracing(self):
+        conf = self._agent_conf()
+
+        if conf.get('opentelemetryenabled', False) == False or conf.get('opentelemetryendpoint', '') == '':
+            return
+
+        exporter = BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=conf.get('opentelemetryendpoint'),
+            insecure=conf.get('opentelemetryinsecure', False),
+        ))
+
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(exporter)
+
+        trace.set_tracer_provider(provider)
+
+    def _tracer(self):
+        return trace.get_tracer("juju-controller-charm")
 
 
 def metrics_username(relation: Relation) -> str:
@@ -256,6 +305,44 @@ def metrics_username(relation: Relation) -> str:
 
 def generate_password() -> str:
     return secrets.token_urlsafe(16)
+
+
+def juju_span_context() -> SpanContext:
+    trace_id_hex = os.getenv('JUJU_TRACE_ID', '')
+    if trace_id_hex == '':
+        return None
+
+    span_id_hex = os.getenv('JUJU_SPAN_ID', '')
+    if span_id_hex == '':
+        return None
+
+    trace_id = _int_from_hex_str(trace_id_hex, None)
+    if trace_id is None:
+        return None
+
+    span_id = _int_from_hex_str(span_id_hex, None)
+    if span_id is None:
+        return None
+
+    span_context = SpanContext(
+        trace_id=trace_id,
+        span_id=span_id,
+        is_remote=True,
+        trace_flags=TraceFlags(0x01),
+    )
+
+    logger.info(f"trace_id: {trace_id_hex}, span_id: {span_id_hex}")
+
+    return trace.set_span_in_context(NonRecordingSpan(span_context))
+
+
+def _int_from_hex_str(
+    identifier: str, default: Optional[int]
+) -> Optional[int]:
+    try:
+        return int(identifier, 16)
+    except ValueError:
+        return default
 
 
 class AgentConfException(Exception):
