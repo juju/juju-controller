@@ -4,6 +4,7 @@
 import os
 import unittest
 from charm import JujuControllerCharm
+from ops.model import BlockedStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -14,10 +15,14 @@ cacert: fake
 
 
 class TestCharm(unittest.TestCase):
-    def test_relation_joined(self):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+    def setUp(self):
+        self.harness = Harness(JujuControllerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+
+    def test_dashboard_relation_joined(self):
+        harness = self.harness
+
         harness.set_leader(True)
         harness.update_config({"controller-url": "wss://controller/api"})
         harness.update_config({"identity-provider-url": ""})
@@ -36,12 +41,10 @@ class TestCharm(unittest.TestCase):
     })
     @patch("ops.model.Model.get_binding")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    def test_website_relation_joined(self, _, ingress_address):
-        ingress_address.return_value = MockBinding("192.168.1.17")
+    def test_website_relation_joined(self, _, binding):
+        harness = self.harness
+        binding.return_value = mockBinding(["192.168.1.17"])
 
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
         harness.set_leader()
         relation_id = harness.add_relation('website', 'haproxy')
         harness.add_relation_unit(relation_id, 'haproxy/0')
@@ -58,10 +61,7 @@ class TestCharm(unittest.TestCase):
     @patch("controlsocket.Client.remove_metrics_user")
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
                                        mock_metrics_provider, _):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
-
+        harness = self.harness
         harness.add_network(address="192.168.1.17", endpoint="metrics-endpoint")
 
         relation_id = harness.add_relation('metrics-endpoint', 'prometheus-k8s')
@@ -88,12 +88,40 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
 
+    @patch("ops.model.Model.get_binding")
+    def test_dbcluster_relation_changed_single_addr(self, binding):
+        harness = self.harness
+        binding.return_value = mockBinding(["192.168.1.17"])
 
-class MockBinding:
-    def __init__(self, address):
-        self.network = MockNetwork(address)
+        relation_id = harness.add_relation('dbcluster', 'controller')
+        harness.add_relation_unit(relation_id, 'juju-controller/1')
+
+        harness.charm._on_dbcluster_relation_changed(
+            harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
+
+        data = harness.get_relation_data(relation_id, 'juju-controller/0')
+        self.assertEqual(data["db-bind-address"], "192.168.1.17")
+
+    @patch("ops.model.Model.get_binding")
+    def test_dbcluster_relation_changed_multi_addr_error(self, binding):
+        harness = self.harness
+        binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
+
+        relation_id = harness.add_relation('dbcluster', 'controller')
+        harness.add_relation_unit(relation_id, 'juju-controller/1')
+
+        harness.charm._on_dbcluster_relation_changed(
+            harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
+
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
 
-class MockNetwork:
-    def __init__(self, address):
-        self.ingress_address = address
+class mockNetwork:
+    def __init__(self, addresses):
+        self.ingress_addresses = addresses
+        self.ingress_address = addresses[0]
+
+
+class mockBinding:
+    def __init__(self, addresses):
+        self.network = mockNetwork(addresses)
