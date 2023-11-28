@@ -4,7 +4,7 @@
 import os
 import unittest
 from charm import JujuControllerCharm
-from ops.model import BlockedStatus
+from ops.model import BlockedStatus, ActiveStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -88,8 +88,9 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_single_addr(self, binding):
+    def test_dbcluster_relation_changed_single_addr(self, binding, _):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17"])
 
@@ -102,8 +103,12 @@ class TestCharm(unittest.TestCase):
         data = harness.get_relation_data(relation_id, 'juju-controller/0')
         self.assertEqual(data["db-bind-address"], "192.168.1.17")
 
+        harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_multi_addr_error(self, binding):
+    def test_dbcluster_relation_changed_multi_addr_error(self, binding, _):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
 
@@ -113,6 +118,7 @@ class TestCharm(unittest.TestCase):
         harness.charm._on_dbcluster_relation_changed(
             harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
 
+        harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
 

@@ -6,8 +6,9 @@ import controlsocket
 import logging
 import secrets
 import yaml
+
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from ops.charm import CharmBase
+from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
 from ops.charm import RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
@@ -22,14 +23,15 @@ class JujuControllerCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
 
+        self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
-        self.framework.observe(self.on.start, self._on_start)
         self.framework.observe(
             self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
 
         self._stored.set_default(db_bind_address='')
+        self._stored.set_default(last_bind_addresses=[])
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
@@ -40,8 +42,16 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
 
-    def _on_start(self, _):
-        self.unit.status = ActiveStatus()
+    def _on_collect_status(self, event: CollectStatusEvent):
+        if len(self._stored.last_bind_addresses) > 1:
+            event.add_status(BlockedStatus(
+                'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
+
+        if self.api_port() is None:
+            event.add_status(BlockedStatus(
+                'charm does not appear to be running on a controller node'))
+
+        event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
@@ -63,8 +73,7 @@ class JujuControllerCharm(CharmBase):
         logger.info('got a new website relation: %r', event)
         port = self.api_port()
         if port is None:
-            logger.error('machine does not appear to be a controller')
-            self.unit.status = BlockedStatus('machine does not appear to be a controller')
+            logger.error('charm does not appear to be running on a controller node')
             return
 
         address = None
@@ -112,11 +121,11 @@ class JujuControllerCharm(CharmBase):
 
     def _on_dbcluster_relation_changed(self, event):
         ips = self.model.get_binding(event.relation).network.ingress_addresses
+        self._stored.last_bind_addresses = ips
 
         if len(ips) > 1:
-            logger.error('multiple possible DB bind addresses; set a dbcluster network binding')
-            self.unit.status = BlockedStatus(
-                'multiple possible DB bind addresses; set a dbcluster network binding')
+            logger.error(
+                'multiple possible DB bind addresses; set a suitable bcluster network binding')
             return
 
         ip = str(ips[0])
