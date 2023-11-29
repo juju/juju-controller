@@ -16,3 +16,6 @@ provides:
     interface: http
   metrics-endpoint:
     interface: prometheus_scrape
+peers:
+  dbcluster:
+    interface: dbcluster
