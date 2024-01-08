@@ -1,6 +1,7 @@
 # Copyright 2021 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 
+import ipaddress
 import os
 import unittest
 from charm import JujuControllerCharm, AgentConfException
@@ -113,18 +114,14 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
     def test_apiaddresses_missing(self, _):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+        harness = self.harness
 
         with self.assertRaisesRegex(AgentConfException, "agent.conf key 'apiaddresses' missing"):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_not_list)
     def test_apiaddresses_not_list(self, _):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+        harness = self.harness
 
         with self.assertRaisesRegex(
             AgentConfException, "agent.conf key 'apiaddresses' is not a list"
@@ -134,9 +131,7 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
     @patch("controlsocket.Client.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+        harness = self.harness
 
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
@@ -144,17 +139,13 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+        harness = self.harness
 
         self.assertEqual(harness.charm.api_port(), 17070)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
     def test_apiaddresses_ipv6(self, _):
-        harness = Harness(JujuControllerCharm)
-        self.addCleanup(harness.cleanup)
-        harness.begin()
+        harness = self.harness
 
         self.assertEqual(harness.charm.api_port(), 17070)
 
@@ -162,15 +153,24 @@ class TestCharm(unittest.TestCase):
     @patch("ops.model.Model.get_binding")
     def test_dbcluster_relation_changed_single_addr(self, binding, _):
         harness = self.harness
-        binding.return_value = mockBinding(["192.168.1.17"])
+        binding.return_value = mockBinding(['192.168.1.17'])
+
+        # Have another unit enter the relation.
+        # Its bind address should end up in the application data bindings list.
         relation_id = harness.add_relation('dbcluster', 'controller')
         harness.add_relation_unit(relation_id, 'juju-controller/1')
+        self.harness.update_relation_data(
+            relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
 
+        harness.set_leader()
         harness.charm._on_dbcluster_relation_changed(
             harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
 
-        data = harness.get_relation_data(relation_id, 'juju-controller/0')
-        self.assertEqual(data["db-bind-address"], "192.168.1.17")
+        unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
+        self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
+
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        self.assertEqual(app_data['db-bind-addresses'], '192.168.1.100,192.168.1.17')
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
@@ -193,7 +193,7 @@ class TestCharm(unittest.TestCase):
 
 class mockNetwork:
     def __init__(self, addresses):
-        self.ingress_addresses = addresses
+        self.ingress_addresses = [ipaddress.ip_address(addr) for addr in addresses]
         self.ingress_address = addresses[0]
 
 
