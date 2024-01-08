@@ -3,13 +3,36 @@
 
 import os
 import unittest
-from charm import JujuControllerCharm
-from ops.model import BlockedStatus, ActiveStatus
+from charm import JujuControllerCharm, AgentConfException
+from ops.model import BlockedStatus, ActiveStatus, ErrorStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
 agent_conf = '''
-apiport: 17070
+apiaddresses:
+- localhost:17070
+cacert: fake
+'''
+
+agent_conf_apiaddresses_missing = '''
+cacert: fake
+'''
+
+agent_conf_apiaddresses_not_list = '''
+apiaddresses:
+  foo: bar
+cacert: fake
+'''
+
+agent_conf_ipv4 = '''
+apiaddresses:
+- "127.0.0.1:17070"
+cacert: fake
+'''
+
+agent_conf_ipv6 = '''
+apiaddresses:
+- "[::1]:17070"
 cacert: fake
 '''
 
@@ -88,12 +111,58 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    def test_apiaddresses_missing(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        with self.assertRaisesRegex(AgentConfException, "agent.conf key 'apiaddresses' missing"):
+            harness.charm.api_port()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_not_list)
+    def test_apiaddresses_not_list(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        with self.assertRaisesRegex(
+            AgentConfException, "agent.conf key 'apiaddresses' is not a list"
+        ):
+            harness.charm.api_port()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    @patch("controlsocket.Client.add_metrics_user")
+    def test_apiaddresses_missing_status(self, *_):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        harness.add_relation('metrics-endpoint', 'prometheus-k8s')
+        harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ErrorStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
+    def test_apiaddresses_ipv4(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        self.assertEqual(harness.charm.api_port(), 17070)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
+    def test_apiaddresses_ipv6(self, _):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+
+        self.assertEqual(harness.charm.api_port(), 17070)
+
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("ops.model.Model.get_binding")
     def test_dbcluster_relation_changed_single_addr(self, binding, _):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17"])
-
         relation_id = harness.add_relation('dbcluster', 'controller')
         harness.add_relation_unit(relation_id, 'juju-controller/1')
 

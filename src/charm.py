@@ -5,6 +5,7 @@
 import controlsocket
 import logging
 import secrets
+import urllib.parse
 import yaml
 
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
@@ -12,7 +13,8 @@ from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
 from ops.charm import RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class JujuControllerCharm(CharmBase):
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
         self.control_socket = controlsocket.Client(
-            socket_path="/var/lib/juju/control.socket")
+            socket_path='/var/lib/juju/control.socket')
         self.framework.observe(
             self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
         self.framework.observe(
@@ -47,9 +49,11 @@ class JujuControllerCharm(CharmBase):
             event.add_status(BlockedStatus(
                 'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
-        if self.api_port() is None:
-            event.add_status(BlockedStatus(
-                'charm does not appear to be running on a controller node'))
+        try:
+            self.api_port()
+        except AgentConfException as e:
+            event.add_status(ErrorStatus(
+                f"cannot read controller API port from agent configuration: {e}"))
 
         event.add_status(ActiveStatus())
 
@@ -71,9 +75,11 @@ class JujuControllerCharm(CharmBase):
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
         logger.info('got a new website relation: %r', event)
-        port = self.api_port()
-        if port is None:
-            logger.error('charm does not appear to be running on a controller node')
+
+        try:
+            api_port = self.api_port()
+        except AgentConfException as e:
+            logger.error("cannot read controller API port from agent configuration: {}", e)
             return
 
         address = None
@@ -84,7 +90,7 @@ class JujuControllerCharm(CharmBase):
                 event.relation.data[self.unit].update({
                     'hostname': str(address),
                     'private-address': str(address),
-                    'port': str(port)
+                    'port': str(api_port)
                 })
 
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
@@ -93,6 +99,12 @@ class JujuControllerCharm(CharmBase):
         self.control_socket.add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
+        try:
+            api_port = self.api_port()
+        except AgentConfException as e:
+            logger.error("cannot read controller API port from agent configuration: {}", e)
+            return
+
         metrics_endpoint = MetricsEndpointProvider(
             self,
             jobs=[{
@@ -100,7 +112,7 @@ class JujuControllerCharm(CharmBase):
                 "scheme": "https",
                 "static_configs": [{
                     "targets": [
-                        f'*:{self.api_port()}'
+                        f'*:{api_port}'
                     ]
                 }],
                 "basic_auth": {
@@ -135,6 +147,23 @@ class JujuControllerCharm(CharmBase):
         self._stored.db_bind_address = ip
         event.relation.data[self.unit].update({'db-bind-address': ip})
 
+    def api_port(self) -> str:
+        """Return the port on which the controller API server is listening."""
+        api_addresses = self._agent_conf('apiaddresses')
+        if not api_addresses:
+            raise AgentConfException("agent.conf key 'apiaddresses' missing")
+        if not isinstance(api_addresses, List):
+            raise AgentConfException("agent.conf key 'apiaddresses' is not a list")
+
+        parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
+        if not parsed_url.port:
+            raise AgentConfException("API address does not include port")
+        return parsed_url.port
+
+    def ca_cert(self) -> str:
+        """Return the controller's CA certificate."""
+        return self._agent_conf('cacert')
+
     def _agent_conf(self, key: str):
         """Read a value (by key) from the agent.conf file on disk."""
         unit_name = self.unit.name.replace('/', '-')
@@ -143,14 +172,6 @@ class JujuControllerCharm(CharmBase):
         with open(agent_conf_path) as agent_conf_file:
             agent_conf = yaml.safe_load(agent_conf_file)
             return agent_conf.get(key)
-
-    def api_port(self) -> str:
-        """Return the port on which the controller API server is listening."""
-        return self._agent_conf('apiport')
-
-    def ca_cert(self) -> str:
-        """Return the controller's CA certificate."""
-        return self._agent_conf('cacert')
 
 
 def metrics_username(relation: Relation) -> str:
@@ -164,6 +185,10 @@ def metrics_username(relation: Relation) -> str:
 
 def generate_password() -> str:
     return secrets.token_urlsafe(16)
+
+
+class AgentConfException(Exception):
+    """Raised when there are errors reading info from agent.conf."""
 
 
 if __name__ == "__main__":
