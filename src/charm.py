@@ -38,7 +38,7 @@ class JujuControllerCharm(CharmBase):
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
         self.control_socket = controlsocket.Client(
-            socket_path="/var/lib/juju/control.socket")
+            socket_path='/var/lib/juju/control.socket')
         self.framework.observe(
             self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
         self.framework.observe(
@@ -49,9 +49,11 @@ class JujuControllerCharm(CharmBase):
             event.add_status(BlockedStatus(
                 'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
-        if self.api_port() is None:
-            event.add_status(BlockedStatus(
-                'charm does not appear to be running on a controller node'))
+        try:
+            self.api_port()
+        except AgentConfException as e:
+            event.add_status(ErrorStatus(
+                f"cannot read controller API port from agent configuration: {e}"))
 
         event.add_status(ActiveStatus())
 
@@ -73,9 +75,11 @@ class JujuControllerCharm(CharmBase):
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
         logger.info('got a new website relation: %r', event)
-        port = self.api_port()
-        if port is None:
-            logger.error('charm does not appear to be running on a controller node')
+
+        try:
+            api_port = self.api_port()
+        except AgentConfException as e:
+            logger.error("cannot read controller API port from agent configuration: {}", e)
             return
 
         address = None
@@ -86,7 +90,7 @@ class JujuControllerCharm(CharmBase):
                 event.relation.data[self.unit].update({
                     'hostname': str(address),
                     'private-address': str(address),
-                    'port': str(port)
+                    'port': str(api_port)
                 })
 
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
@@ -98,7 +102,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            self.unit.status = ErrorStatus(f"can't read controller API port from agent.conf: {e}")
+            logger.error("cannot read controller API port from agent configuration: {}", e)
             return
 
         metrics_endpoint = MetricsEndpointProvider(
@@ -143,15 +147,6 @@ class JujuControllerCharm(CharmBase):
         self._stored.db_bind_address = ip
         event.relation.data[self.unit].update({'db-bind-address': ip})
 
-    def _agent_conf(self, key: str):
-        """Read a value (by key) from the agent.conf file on disk."""
-        unit_name = self.unit.name.replace('/', '-')
-        agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
-
-        with open(agent_conf_path) as agent_conf_file:
-            agent_conf = yaml.safe_load(agent_conf_file)
-            return agent_conf.get(key)
-
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
         api_addresses = self._agent_conf('apiaddresses')
@@ -162,12 +157,21 @@ class JujuControllerCharm(CharmBase):
 
         parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
         if not parsed_url.port:
-            raise AgentConfException("api address doesn't include port")
+            raise AgentConfException("API address does not include port")
         return parsed_url.port
 
     def ca_cert(self) -> str:
         """Return the controller's CA certificate."""
         return self._agent_conf('cacert')
+
+    def _agent_conf(self, key: str):
+        """Read a value (by key) from the agent.conf file on disk."""
+        unit_name = self.unit.name.replace('/', '-')
+        agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
+
+        with open(agent_conf_path) as agent_conf_file:
+            agent_conf = yaml.safe_load(agent_conf_file)
+            return agent_conf.get(key)
 
 
 def metrics_username(relation: Relation) -> str:
