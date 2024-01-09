@@ -3,6 +3,7 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import controlsocket
+import json
 import logging
 import secrets
 import urllib.parse
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class JujuControllerCharm(CharmBase):
+    DB_BIND_ADDR_KEY = 'db-bind-address'
     _stored = StoredState()
 
     def __init__(self, *args):
@@ -32,8 +34,7 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
 
-        self._stored.set_default(db_bind_address='')
-        self._stored.set_default(last_bind_addresses=[])
+        self._stored.set_default(db_bind_address='', last_bind_addresses=[], all_bind_addresses=dict())
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
@@ -53,16 +54,16 @@ class JujuControllerCharm(CharmBase):
             self.api_port()
         except AgentConfException as e:
             event.add_status(ErrorStatus(
-                f"cannot read controller API port from agent configuration: {e}"))
+                f'cannot read controller API port from agent configuration: {e}'))
 
         event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
-        logger.info("got a new controller-url: %r", controller_url)
+        logger.info('got a new controller-url: %r', controller_url)
 
     def _on_dashboard_relation_joined(self, event):
-        logger.info("got a new dashboard relation: %r", event)
+        logger.info('got a new dashboard relation: %r', event)
         if self.unit.is_leader():
             event.relation.data[self.app].update({
                 'controller-url': self.config['controller-url'],
@@ -79,7 +80,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            logger.error("cannot read controller API port from agent configuration: {}", e)
+            logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
         address = None
@@ -102,7 +103,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            logger.error("cannot read controller API port from agent configuration: {}", e)
+            logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
         metrics_endpoint = MetricsEndpointProvider(
@@ -132,20 +133,45 @@ class JujuControllerCharm(CharmBase):
         self.control_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
-        ips = self.model.get_binding(event.relation).network.ingress_addresses
+        """Ensure that a bind address for Dqlite is set in relation data,
+        if we can determine a unique one from the relation's bound space.
+        If we are the leader, aggregate the bind addresses for all the peers,
+        and ensure the result is set in the application data bag.
+        """
+        self._ensure_db_bind_address(event)
+
+        if self.unit.is_leader():
+            # The event only has *other* units so include this
+            # unit's bind address if we have managed to set it.
+            ip = self._stored.db_bind_address
+            all_bind_addresses = {self.unit.name: ip} if ip else dict()
+
+            for unit in event.relation.units:
+                unit_data = event.relation.data[unit]
+                if self.DB_BIND_ADDR_KEY in unit_data:
+                    all_bind_addresses[unit.name] = unit_data[self.DB_BIND_ADDR_KEY]
+
+            if self._stored.all_bind_addresses == all_bind_addresses:
+                return
+
+            event.relation.data[self.app]['db-bind-addresses'] = json.dumps(all_bind_addresses)
+            self._stored.all_bind_addresses = all_bind_addresses
+
+    def _ensure_db_bind_address(self, event):
+        ips = [str(ip) for ip in self.model.get_binding(event.relation).network.ingress_addresses]
         self._stored.last_bind_addresses = ips
 
         if len(ips) > 1:
             logger.error(
-                'multiple possible DB bind addresses; set a suitable bcluster network binding')
+                'multiple possible DB bind addresses; set a suitable cluster network binding')
             return
 
-        ip = str(ips[0])
+        ip = ips[0]
         if self._stored.db_bind_address == ip:
             return
 
+        event.relation.data[self.unit].update({self.DB_BIND_ADDR_KEY: ip})
         self._stored.db_bind_address = ip
-        event.relation.data[self.unit].update({'db-bind-address': ip})
 
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
@@ -157,7 +183,7 @@ class JujuControllerCharm(CharmBase):
 
         parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
         if not parsed_url.port:
-            raise AgentConfException("API address does not include port")
+            raise AgentConfException('API address does not include port')
         return parsed_url.port
 
     def ca_cert(self) -> str:
