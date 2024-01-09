@@ -3,6 +3,7 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import controlsocket
+import json
 import logging
 import secrets
 import urllib.parse
@@ -33,7 +34,7 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
 
-        self._stored.set_default(db_bind_address='', last_bind_addresses=[], all_bind_addresses=[])
+        self._stored.set_default(db_bind_address='', last_bind_addresses=[], all_bind_addresses=dict())
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
@@ -79,7 +80,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            logger.error('cannot read controller API port from agent configuration: {}', e)
+            logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
         address = None
@@ -102,7 +103,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            logger.error('cannot read controller API port from agent configuration: {}', e)
+            logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
         metrics_endpoint = MetricsEndpointProvider(
@@ -143,18 +144,17 @@ class JujuControllerCharm(CharmBase):
             # The event only has *other* units so include this
             # unit's bind address if we have managed to set it.
             ip = self._stored.db_bind_address
-            all_bind_addresses = [ip] if ip else []
+            all_bind_addresses = {self.unit.name: ip} if ip else dict()
 
             for unit in event.relation.units:
                 unit_data = event.relation.data[unit]
                 if self.DB_BIND_ADDR_KEY in unit_data:
-                    all_bind_addresses.append(unit_data[self.DB_BIND_ADDR_KEY])
+                    all_bind_addresses[unit.name] = unit_data[self.DB_BIND_ADDR_KEY]
 
-            all_bind_addresses.sort()
             if self._stored.all_bind_addresses == all_bind_addresses:
                 return
 
-            event.relation.data[self.app]['db-bind-addresses'] = ','.join(all_bind_addresses)
+            event.relation.data[self.app]['db-bind-addresses'] = json.dumps(all_bind_addresses)
             self._stored.all_bind_addresses = all_bind_addresses
 
     def _ensure_db_bind_address(self, event):

@@ -2,6 +2,7 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import ipaddress
+import json
 import os
 import unittest
 from charm import JujuControllerCharm, AgentConfException
@@ -170,7 +171,8 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
 
         app_data = harness.get_relation_data(relation_id, 'juju-controller')
-        self.assertEqual(app_data['db-bind-addresses'], '192.168.1.100,192.168.1.17')
+        exp = {"juju-controller/0": "192.168.1.17", "juju-controller/1": "192.168.1.100"}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
