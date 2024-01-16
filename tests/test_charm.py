@@ -5,6 +5,8 @@ import ipaddress
 import json
 import os
 import unittest
+import yaml
+
 from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus, ErrorStatus
 from ops.testing import Harness
@@ -156,16 +158,14 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         binding.return_value = mockBinding(['192.168.1.17'])
 
+        harness.set_leader()
+
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
-        relation_id = harness.add_relation('dbcluster', 'controller')
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
-
-        harness.set_leader()
-        harness.charm._on_dbcluster_relation_changed(
-            harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
 
         unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
         self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
@@ -183,14 +183,45 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
 
-        relation_id = harness.add_relation('dbcluster', 'controller')
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
 
-        harness.charm._on_dbcluster_relation_changed(
-            harness.charm.model.get_relation('dbcluster').data[harness.charm.unit])
+        self.harness.update_relation_data(
+            relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("ops.model.Model.get_binding")
+    def test_dbcluster_relation_changed_write_file(self, binding, mock_open):
+        harness = self.harness
+        binding.return_value = mockBinding(['192.168.1.17'])
+
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        harness.add_relation_unit(relation_id, 'juju-controller/1')
+        bound = {'juju-controller/0': '192.168.1.17', 'juju-controller/1': '192.168.1.100'}
+        self.harness.update_relation_data(
+            relation_id, harness.charm.app.name, {'db-bind-addresses': json.dumps(bound)})
+
+        file_path = '/var/lib/juju/agents/controller-0/agent.conf'
+        self.assertEqual(mock_open.call_count, 2)
+
+        # First call to read out the YAML
+        first_call_args, _ = mock_open.call_args_list[0]
+        self.assertEqual(first_call_args, (file_path,))
+
+        # Second call to write the updated YAML.
+        second_call_args, _ = mock_open.call_args_list[1]
+        self.assertEqual(second_call_args, (file_path, 'w'))
+
+        # yaml.dump appears to write the the file incrementally,
+        # so we need to hoover up the call args to reconstruct.
+        written = ''
+        for args in mock_open().write.call_args_list:
+            written += args[0][0]
+
+        self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
 
 
 class mockNetwork:

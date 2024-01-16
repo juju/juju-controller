@@ -2,7 +2,7 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 name: juju-controller
 assumes:
-- juju >= 3.3
+- juju >= 4.0
 description: |
   The Juju controller charm is used to expose various pieces
   of functionality of a Juju controller.
