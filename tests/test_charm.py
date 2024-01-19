@@ -162,7 +162,7 @@ class TestCharm(unittest.TestCase):
 
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
-        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
@@ -183,7 +183,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
 
-        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
 
         self.harness.update_relation_data(
