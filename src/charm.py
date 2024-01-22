@@ -5,7 +5,9 @@
 import controlsocket
 import json
 import logging
+import re
 import secrets
+import subprocess
 import urllib.parse
 import yaml
 
@@ -39,7 +41,10 @@ class JujuControllerCharm(CharmBase):
             self.on.website_relation_joined, self._on_website_relation_joined)
 
         self._stored.set_default(
-            db_bind_address='', last_bind_addresses=[], all_bind_addresses=dict())
+            db_bind_address='',
+            last_bind_addresses=[],
+            all_bind_addresses=dict(),
+        )
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
@@ -241,8 +246,24 @@ class JujuControllerCharm(CharmBase):
             return agent_conf.get(key)
 
     def _controller_config_path(self) -> str:
-        unit_num = self.unit.name.split('/')[1]
-        return f'/var/lib/juju/agents/controller-{unit_num}/agent.conf'
+        """Interrogate the running controller jujud service to determine
+        the local controller ID, then use it to construct a config path.
+        """
+
+        res = subprocess.check_output(
+            ['systemctl', 'list-units', 'jujud_machine*.service', '--no-legend'], text=True)
+
+        services = [line.split()[0] for line in res.strip().split('\n') if line]
+        if len(services) != 1:
+            raise AgentConfException('Unable to determine service for running controller')
+
+        match = re.search(r'jujud-machine-(\d+)\.service', services[0])
+        if not match:
+            raise AgentConfException('Unable to determine ID for running controller')
+
+        controller_id = match.group(1)
+
+        return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
 
 
 def metrics_username(relation: Relation) -> str:
@@ -259,7 +280,7 @@ def generate_password() -> str:
 
 
 class AgentConfException(Exception):
-    """Raised when there are errors reading info from agent.conf."""
+    """Raised when there are errors regarding agent configuration."""
 
 
 if __name__ == "__main__":
