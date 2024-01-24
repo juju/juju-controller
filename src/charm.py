@@ -187,8 +187,6 @@ class JujuControllerCharm(CharmBase):
 
             self._update_config_file(all_bind_addresses)
 
-        self._sighup_controller_process
-
     def _ensure_db_bind_address(self, relation):
         """Ensure that a bind address for Dqlite is set in relation data,
         if we can determine a unique one from the relation's bound space.
@@ -221,6 +219,7 @@ class JujuControllerCharm(CharmBase):
         with open(file_path, 'w') as conf_file:
             yaml.dump(conf, conf_file)
 
+        self._sighup_controller_process()
         self._stored.all_bind_addresses = bind_addresses
 
     def api_port(self) -> str:
@@ -258,19 +257,18 @@ class JujuControllerCharm(CharmBase):
             raise AgentConfException('Unable to determine ID for running controller')
 
         controller_id = match.group(1)
-
         return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
 
     def _sighup_controller_process(self):
-        result = subprocess.check_output(
+        res = subprocess.check_output(
             ["systemctl", "show", "--property=MainPID", self._controller_service_name()])
-        pid = result.decode('utf-8').strip().split('=')[-1]
 
-        os.kill(pid, signal.SIGHUP)
+        pid = res.decode('utf-8').strip().split('=')[-1]
+        os.kill(int(pid), signal.SIGHUP)
 
     def _controller_service_name(self) -> str:
         res = subprocess.check_output(
-            ['systemctl', 'list-units', 'jujud_machine*.service', '--no-legend'], text=True)
+            ['systemctl', 'list-units', 'jujud-machine-*.service', '--no-legend'], text=True)
 
         services = [line.split()[0] for line in res.strip().split('\n') if line]
         if len(services) != 1:

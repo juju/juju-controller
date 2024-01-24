@@ -4,6 +4,7 @@
 import ipaddress
 import json
 import os
+import signal
 import unittest
 import yaml
 
@@ -142,21 +143,23 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):
-        harness = self.harness
-
-        self.assertEqual(harness.charm.api_port(), 17070)
+        self.assertEqual(self.harness.charm.api_port(), 17070)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
     def test_apiaddresses_ipv6(self, _):
-        harness = self.harness
+        self.assertEqual(self.harness.charm.api_port(), 17070)
 
-        self.assertEqual(harness.charm.api_port(), 17070)
-
+    @patch('os.kill')
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch('subprocess.check_output')
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_single_addr(self, binding, _):
+    def test_dbcluster_relation_changed_single_addr(self, mock_get_binding, mock_check_out, *_):
         harness = self.harness
-        binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+
+        # First calls are to get the controller service name; last is for its PID.
+        mock_check_out.side_effect = [
+            'jujud-machine-0.service', 'jujud-machine-0.service', b'pid=12345']
 
         harness.set_leader()
 
@@ -192,11 +195,19 @@ class TestCharm(unittest.TestCase):
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
+    @patch('os.kill')
+    @patch('subprocess.check_output')
     @patch("builtins.open", new_callable=mock_open)
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_write_file(self, binding, mock_open):
+    def test_dbcluster_relation_changed_write_file(
+            self, mock_get_binding, mock_open, mock_check_out, mock_kill):
+
         harness = self.harness
-        binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+
+        # First calls are to get the controller service name; last is for its PID.
+        mock_check_out.side_effect = [
+            'jujud-machine-0.service', 'jujud-machine-0.service', b'pid=12345']
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -208,12 +219,12 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(mock_open.call_count, 2)
 
         # First call to read out the YAML
-        first_call_args, _ = mock_open.call_args_list[0]
-        self.assertEqual(first_call_args, (file_path,))
+        first_open_args, _ = mock_open.call_args_list[0]
+        self.assertEqual(first_open_args, (file_path,))
 
         # Second call to write the updated YAML.
-        second_call_args, _ = mock_open.call_args_list[1]
-        self.assertEqual(second_call_args, (file_path, 'w'))
+        second_open_args, _ = mock_open.call_args_list[1]
+        self.assertEqual(second_open_args, (file_path, 'w'))
 
         # yaml.dump appears to write the the file incrementally,
         # so we need to hoover up the call args to reconstruct.
@@ -222,6 +233,9 @@ class TestCharm(unittest.TestCase):
             written += args[0][0]
 
         self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
+
+        # The last thing we should have done is sent SIGHUP to Juju to reload the config.
+        mock_kill.assert_called_once_with(12345, signal.SIGHUP)
 
 
 class mockNetwork:
