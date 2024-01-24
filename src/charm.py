@@ -5,8 +5,10 @@
 import controlsocket
 import json
 import logging
+import os
 import re
 import secrets
+import signal
 import subprocess
 import urllib.parse
 import yaml
@@ -185,6 +187,8 @@ class JujuControllerCharm(CharmBase):
 
             self._update_config_file(all_bind_addresses)
 
+        self._sighup_controller_process
+
     def _ensure_db_bind_address(self, relation):
         """Ensure that a bind address for Dqlite is set in relation data,
         if we can determine a unique one from the relation's bound space.
@@ -249,7 +253,22 @@ class JujuControllerCharm(CharmBase):
         """Interrogate the running controller jujud service to determine
         the local controller ID, then use it to construct a config path.
         """
+        match = re.search(r'jujud-machine-(\d+)\.service', self._controller_service_name())
+        if not match:
+            raise AgentConfException('Unable to determine ID for running controller')
 
+        controller_id = match.group(1)
+
+        return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
+
+    def _sighup_controller_process(self):
+        result = subprocess.check_output(
+            ["systemctl", "show", "--property=MainPID", self._controller_service_name()])
+        pid = result.decode('utf-8').strip().split('=')[-1]
+
+        os.kill(pid, signal.SIGHUP)
+
+    def _controller_service_name(self) -> str:
         res = subprocess.check_output(
             ['systemctl', 'list-units', 'jujud_machine*.service', '--no-legend'], text=True)
 
@@ -257,13 +276,7 @@ class JujuControllerCharm(CharmBase):
         if len(services) != 1:
             raise AgentConfException('Unable to determine service for running controller')
 
-        match = re.search(r'jujud-machine-(\d+)\.service', services[0])
-        if not match:
-            raise AgentConfException('Unable to determine ID for running controller')
-
-        controller_id = match.group(1)
-
-        return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
+        return services[0]
 
 
 def metrics_username(relation: Relation) -> str:
