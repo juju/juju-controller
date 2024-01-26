@@ -1,2 +1,6 @@
 ops
 charmhelpers
+opentelemetry-sdk
+opentelemetry-api
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-semantic-conventions
