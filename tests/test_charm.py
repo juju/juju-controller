@@ -9,7 +9,7 @@ import unittest
 import yaml
 
 from charm import JujuControllerCharm, AgentConfException
-from ops.model import BlockedStatus, ActiveStatus, ErrorStatus
+from ops.model import BlockedStatus, ActiveStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -139,7 +139,7 @@ class TestCharm(unittest.TestCase):
 
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ErrorStatus)
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):

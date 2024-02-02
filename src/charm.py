@@ -18,7 +18,7 @@ from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
 from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, Relation
 from pathlib import Path
 from typing import List
 
@@ -71,7 +71,7 @@ class JujuControllerCharm(CharmBase):
         try:
             self.api_port()
         except AgentConfException as e:
-            event.add_status(ErrorStatus(
+            event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
 
         event.add_status(ActiveStatus())
