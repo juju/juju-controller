@@ -157,9 +157,8 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
-        # First calls are to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = [
-            'jujud-machine-0.service', 'jujud-machine-0.service', b'pid=12345']
+        # First call is to get the controller service name; last is for its PID.
+        mock_check_out.side_effect = ['jujud-machine-0.service', '12345']
 
         harness.set_leader()
 
@@ -205,9 +204,8 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
-        # First calls are to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = [
-            'jujud-machine-0.service', 'jujud-machine-0.service', b'pid=12345']
+        # First call is to get the controller service name; last is for its PID.
+        mock_check_out.side_effect = ['jujud-machine-0.service', '12345']
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')

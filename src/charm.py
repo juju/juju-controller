@@ -208,6 +208,8 @@ class JujuControllerCharm(CharmBase):
         self._stored.db_bind_address = ip
 
     def _update_config_file(self, bind_addresses):
+        logger.info('writing new DB cluster to config file: %s', bind_addresses)
+
         file_path = self._controller_config_path()
         with open(file_path) as conf_file:
             conf = yaml.safe_load(conf_file)
@@ -254,17 +256,10 @@ class JujuControllerCharm(CharmBase):
         """
         match = re.search(r'jujud-machine-(\d+)\.service', self._controller_service_name())
         if not match:
-            raise AgentConfException('Unable to determine ID for running controller')
+            raise ControllerProcessException('Unable to determine ID for running controller')
 
         controller_id = match.group(1)
         return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
-
-    def _sighup_controller_process(self):
-        res = subprocess.check_output(
-            ["systemctl", "show", "--property=MainPID", self._controller_service_name()])
-
-        pid = res.decode('utf-8').strip().split('=')[-1]
-        os.kill(int(pid), signal.SIGHUP)
 
     def _controller_service_name(self) -> str:
         res = subprocess.check_output(
@@ -272,9 +267,26 @@ class JujuControllerCharm(CharmBase):
 
         services = [line.split()[0] for line in res.strip().split('\n') if line]
         if len(services) != 1:
-            raise AgentConfException('Unable to determine service for running controller')
+            raise ControllerProcessException('Unable to determine service for running controller')
 
         return services[0]
+
+    def _sighup_controller_process(self):
+        """Determine the controller's jujud process ID, and signal it with SIGHUP.
+        Note that this is not the process run by the systemd service.
+        That is a shell script that invokes the jujud in the tools path.
+        """
+
+        # This wild card accommodates the different paths for jujud across
+        # K8s and machines. It is safe - we ensure one and only one match.
+        res = subprocess.check_output(['pgrep', '-f', '/var/lib/juju/tools.*jujud'], text=True)
+
+        pids = res.strip().split('\n')
+        if len(pids) != 1:
+            raise ControllerProcessException(
+                'Unable to determine process ID for running controller')
+
+        os.kill(int(pids[0]), signal.SIGHUP)
 
 
 def metrics_username(relation: Relation) -> str:
@@ -292,6 +304,10 @@ def generate_password() -> str:
 
 class AgentConfException(Exception):
     """Raised when there are errors regarding agent configuration."""
+
+
+class ControllerProcessException(Exception):
+    """Raised when there are errors regarding detection of controller service or process."""
 
 
 if __name__ == "__main__":
