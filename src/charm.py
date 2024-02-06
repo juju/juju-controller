@@ -254,39 +254,35 @@ class JujuControllerCharm(CharmBase):
         """Interrogate the running controller jujud service to determine
         the local controller ID, then use it to construct a config path.
         """
-        match = re.search(r'jujud-machine-(\d+)\.service', self._controller_service_name())
+
+        # The option to jujud is controller-id on K8s and machine-id on others.
+        command = self._get_controller_process()[1]
+        print(command)
+        match = re.search(r'(?:--controller-id|--machine-id)\s+(\d+)', command)
         if not match:
             raise ControllerProcessException('Unable to determine ID for running controller')
 
         controller_id = match.group(1)
         return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
 
-    def _controller_service_name(self) -> str:
-        res = subprocess.check_output(
-            ['systemctl', 'list-units', 'jujud-machine-*.service', '--no-legend'], text=True)
-
-        services = [line.split()[0] for line in res.strip().split('\n') if line]
-        if len(services) != 1:
-            raise ControllerProcessException('Unable to determine service for running controller')
-
-        return services[0]
-
     def _sighup_controller_process(self):
-        """Determine the controller's jujud process ID, and signal it with SIGHUP.
-        Note that this is not the process run by the systemd service.
-        That is a shell script that invokes the jujud in the tools path.
-        """
+        """Determine the controller's jujud process ID, and signal it with SIGHUP."""
+        os.kill(self._get_controller_process()[0], signal.SIGHUP)
+
+    def _get_controller_process(self):
+        """Use pgrep to get the controller's jujud process ID and full command."""
 
         # This wild card accommodates the different paths for jujud across
         # K8s and machines. It is safe - we ensure one and only one match.
-        res = subprocess.check_output(['pgrep', '-f', '/var/lib/juju/tools.*jujud'], text=True)
+        res = subprocess.check_output(['pgrep', '-af', '/var/lib/juju/tools.*jujud'], text=True)
 
-        pids = res.strip().split('\n')
-        if len(pids) != 1:
+        lines = res.strip().split('\n')
+        if len(lines) != 1:
             raise ControllerProcessException(
-                'Unable to determine process ID for running controller')
+                'Unable to determine process for running controller')
 
-        os.kill(int(pids[0]), signal.SIGHUP)
+        parts = lines[0].split(' ', 1)
+        return (int(parts[0]), parts[1])
 
 
 def metrics_username(relation: Relation) -> str:

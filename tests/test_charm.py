@@ -157,8 +157,12 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
+        # This is an example of how the jujud invocation looks on machines/VMs.
+        pgrep = ('666 /var/lib/juju/tools/machine-0/jujud machine '
+                 '--data-dir /var/lib/juju --machine-id 0 --debug')
+
         # First call is to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = ['jujud-machine-0.service', '12345']
+        mock_check_out.side_effect = [pgrep, pgrep]
 
         harness.set_leader()
 
@@ -204,8 +208,12 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
+        # This is an example of how the jujud invocation looks on K8s.
+        pgrep = ('12345 /var/lib/juju/tools/jujud machine --data-dir '
+                 '/var/lib/juju --controller-id 0 --log-to-stderr')
+
         # First call is to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = ['jujud-machine-0.service', '12345']
+        mock_check_out.side_effect = [pgrep, pgrep]
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
