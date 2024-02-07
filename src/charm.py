@@ -12,7 +12,7 @@ from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.charm import RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, Relation
 from typing import List
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,8 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            self.unit.status = ErrorStatus(f"can't read controller API port from agent.conf: {e}")
+            self.unit.status = BlockedStatus(
+                f"can't read controller API port from agent.conf: {e}")
             return
 
         metrics_endpoint = MetricsEndpointProvider(
