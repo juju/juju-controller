@@ -60,7 +60,7 @@ class JujuControllerCharm(CharmBase):
         logger.info("got a new website relation: %r", event)
         port = self.api_port()
         if port is None:
-            logger.error("machine does not appear to be a controller")
+            logger.error('machine does not appear to be a controller')
             self.unit.status = BlockedStatus('machine does not appear to be a controller')
             return
 
