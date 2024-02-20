@@ -58,8 +58,8 @@ class JujuControllerCharm(CharmBase):
 
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:
-            event.add_status(BlockedStatus(
-                f'multiple possible DB bind addresses {self._stored.last_bind_addresses}; set a suitable dbcluster network binding'))
+            logger.warning('multiple possible DB bind addresses: %s', self._stored.last_bind_addresses)
+            event.add_status(BlockedStatus('multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
         try:
             self.api_port()
