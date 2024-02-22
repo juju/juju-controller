@@ -3,12 +3,11 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import controlsocket
+import configchangesocket
 import json
 import logging
-import os
 import re
 import secrets
-import signal
 import subprocess
 import urllib.parse
 import yaml
@@ -50,8 +49,10 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
-        self.control_socket = controlsocket.Client(
+        self.control_socket = controlsocket.ControlSocketClient(
             socket_path='/var/lib/juju/control.socket')
+        self.config_change_socket = configchangesocket.ConfigChangeSocketClient(
+            socket_path='/var/lib/juju/configchange.socket')
         self.framework.observe(
             self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
         self.framework.observe(
@@ -221,7 +222,7 @@ class JujuControllerCharm(CharmBase):
         with open(file_path, 'w') as conf_file:
             yaml.dump(conf, conf_file)
 
-        self._sighup_controller_process()
+        self._request_config_reload()
         self._stored.all_bind_addresses = bind_addresses
 
     def api_port(self) -> str:
@@ -265,10 +266,6 @@ class JujuControllerCharm(CharmBase):
         controller_id = match.group(1)
         return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
 
-    def _sighup_controller_process(self):
-        """Determine the controller's jujud process ID, and signal it with SIGHUP."""
-        os.kill(self._get_controller_process()[0], signal.SIGHUP)
-
     def _get_controller_process(self):
         """Use pgrep to get the controller's jujud process ID and full command."""
 
@@ -283,6 +280,10 @@ class JujuControllerCharm(CharmBase):
 
         parts = lines[0].split(' ', 1)
         return (int(parts[0]), parts[1])
+
+    def _request_config_reload(self):
+        """Set reload request to the config reload socket"""
+        self.config_change_socket.reload_config()
 
 
 def metrics_username(relation: Relation) -> str:

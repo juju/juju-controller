@@ -4,8 +4,8 @@
 import ipaddress
 import json
 import os
-import signal
 import unittest
+
 import yaml
 
 from charm import JujuControllerCharm, AgentConfException
@@ -85,8 +85,8 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("charm.MetricsEndpointProvider", autospec=True)
     @patch("charm.generate_password", new=lambda: "passwd")
-    @patch("controlsocket.Client.add_metrics_user")
-    @patch("controlsocket.Client.remove_metrics_user")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    @patch("controlsocket.ControlSocketClient.remove_metrics_user")
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
                                        mock_metrics_provider, _):
         harness = self.harness
@@ -133,7 +133,7 @@ class TestCharm(unittest.TestCase):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
-    @patch("controlsocket.Client.add_metrics_user")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
         harness = self.harness
 
@@ -149,11 +149,12 @@ class TestCharm(unittest.TestCase):
     def test_apiaddresses_ipv6(self, _):
         self.assertEqual(self.harness.charm.api_port(), 17070)
 
-    @patch('os.kill')
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch('subprocess.check_output')
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_single_addr(self, mock_get_binding, mock_check_out, *_):
+    @patch("charm.JujuControllerCharm._request_config_reload")
+    def test_dbcluster_relation_changed_single_addr(
+            self, mock_reload_config, mock_get_binding, mock_check_out, *__):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
@@ -172,6 +173,7 @@ class TestCharm(unittest.TestCase):
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
+        mock_reload_config.assert_called_once()
 
         unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
         self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
@@ -198,12 +200,12 @@ class TestCharm(unittest.TestCase):
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
-    @patch('os.kill')
     @patch('subprocess.check_output')
     @patch("builtins.open", new_callable=mock_open)
     @patch("ops.model.Model.get_binding")
+    @patch("charm.JujuControllerCharm._request_config_reload")
     def test_dbcluster_relation_changed_write_file(
-            self, mock_get_binding, mock_open, mock_check_out, mock_kill):
+            self, mock_reload_config, mock_get_binding, mock_open, mock_check_out):
 
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
@@ -241,7 +243,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
 
         # The last thing we should have done is sent SIGHUP to Juju to reload the config.
-        mock_kill.assert_called_once_with(12345, signal.SIGHUP)
+        mock_reload_config.assert_called_once()
 
 
 class mockNetwork:
