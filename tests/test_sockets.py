@@ -114,7 +114,7 @@ class TestClass(unittest.TestCase):
 
         mock_opener.expect(
             url='http://localhost/reload',
-            method='GET',
+            method='POST',
             body=None,
             response=None,
         )

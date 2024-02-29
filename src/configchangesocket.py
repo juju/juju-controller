@@ -20,7 +20,7 @@ class ConfigChangeSocketClient(unixsocket.SocketClient):
 
     def reload_config(self):
         resp = self.request_raw(
-            method='GET',
+            method='POST',
             path='/reload',
         )
         logger.debug('result of reload request: %r', resp)
