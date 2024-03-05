@@ -150,20 +150,15 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(self.harness.charm.api_port(), 17070)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    @patch('subprocess.check_output')
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
-    @patch("charm.JujuControllerCharm._request_config_reload")
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_changed_single_addr(
-            self, mock_reload_config, mock_get_binding, mock_check_out, *__):
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
-        # This is an example of how the jujud invocation looks on machines/VMs.
-        pgrep = ('666 /var/lib/juju/tools/machine-0/jujud machine '
-                 '--data-dir /var/lib/juju --machine-id 0 --debug')
-
-        # First call is to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = [pgrep, pgrep]
+        mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
 
@@ -173,6 +168,7 @@ class TestCharm(unittest.TestCase):
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
+
         mock_reload_config.assert_called_once()
 
         unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
@@ -200,22 +196,17 @@ class TestCharm(unittest.TestCase):
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
-    @patch('subprocess.check_output')
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("builtins.open", new_callable=mock_open)
     @patch("ops.model.Model.get_binding")
-    @patch("charm.JujuControllerCharm._request_config_reload")
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_changed_write_file(
-            self, mock_reload_config, mock_get_binding, mock_open, mock_check_out):
+            self, mock_reload_config, mock_get_binding, mock_open, mock_get_agent_id):
 
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
-        # This is an example of how the jujud invocation looks on K8s.
-        pgrep = ('12345 /var/lib/juju/tools/jujud machine --data-dir '
-                 '/var/lib/juju --controller-id 0 --log-to-stderr')
-
-        # First call is to get the controller service name; last is for its PID.
-        mock_check_out.side_effect = [pgrep, pgrep]
+        mock_get_agent_id.return_value = '0'
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -242,7 +233,7 @@ class TestCharm(unittest.TestCase):
 
         self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
 
-        # The last thing we should have done is sent SIGHUP to Juju to reload the config.
+        # The last thing we should have done is send a reload request via the socket..
         mock_reload_config.assert_called_once()
 
 

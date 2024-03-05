@@ -18,9 +18,9 @@ class ConfigChangeSocketClient(unixsocket.SocketClient):
                  opener: Optional[urllib.request.OpenerDirector] = None):
         super().__init__(socket_path, opener=opener)
 
+    def get_controller_agent_id(self):
+        resp = self.request_raw(path='/agent-id', method='GET')
+        return resp.read().decode('utf-8')
+
     def reload_config(self):
-        resp = self.request_raw(
-            method='POST',
-            path='/reload',
-        )
-        logger.debug('result of reload request: %r', resp)
+        self.request_raw(path='/reload', method='POST')

@@ -6,9 +6,7 @@ import controlsocket
 import configchangesocket
 import json
 import logging
-import re
 import secrets
-import subprocess
 import urllib.parse
 import yaml
 
@@ -25,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class JujuControllerCharm(CharmBase):
+    METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
+    CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
 
@@ -33,6 +33,23 @@ class JujuControllerCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
 
+        self._observe()
+
+        self._stored.set_default(
+            db_bind_address='',
+            last_bind_addresses=[],
+            all_bind_addresses=dict(),
+        )
+
+        # TODO (manadart 2024-03-05): Get these at need.
+        # No need to instantiate them for every invocatoin.
+        self._control_socket = controlsocket.ControlSocketClient(
+            socket_path=self.METRICS_SOCKET_PATH)
+        self._config_change_socket = configchangesocket.ConfigChangeSocketClient(
+            socket_path=self.CONFIG_SOCKET_PATH)
+
+    def _observe(self):
+        """Set up all framework event observers."""
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
@@ -40,23 +57,12 @@ class JujuControllerCharm(CharmBase):
             self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
-
-        self._stored.set_default(
-            db_bind_address='',
-            last_bind_addresses=[],
-            all_bind_addresses=dict(),
-        )
-        self.framework.observe(
-            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
-
-        self.control_socket = controlsocket.ControlSocketClient(
-            socket_path='/var/lib/juju/control.socket')
-        self.config_change_socket = configchangesocket.ConfigChangeSocketClient(
-            socket_path='/var/lib/juju/configchange.socket')
         self.framework.observe(
             self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
         self.framework.observe(
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
+        self.framework.observe(
+            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
     def _on_install(self, event: InstallEvent):
         """Ensure that the controller configuration file exists."""
@@ -116,7 +122,7 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
-        self.control_socket.add_metrics_user(username, password)
+        self._control_socket.add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
         try:
@@ -149,7 +155,7 @@ class JujuControllerCharm(CharmBase):
 
     def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
         username = metrics_username(event.relation)
-        self.control_socket.remove_metrics_user(username)
+        self._control_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
         """Maintain our own bind address in relation data.
@@ -255,35 +261,12 @@ class JujuControllerCharm(CharmBase):
         """Interrogate the running controller jujud service to determine
         the local controller ID, then use it to construct a config path.
         """
-
-        # The option to jujud is controller-id on K8s and machine-id on others.
-        command = self._get_controller_process()[1]
-        print(command)
-        match = re.search(r'(?:--controller-id|--machine-id)\s+(\d+)', command)
-        if not match:
-            raise ControllerProcessException('Unable to determine ID for running controller')
-
-        controller_id = match.group(1)
+        controller_id = self._config_change_socket.get_controller_agent_id()
         return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
 
-    def _get_controller_process(self):
-        """Use pgrep to get the controller's jujud process ID and full command."""
-
-        # This wild card accommodates the different paths for jujud across
-        # K8s and machines. It is safe - we ensure one and only one match.
-        res = subprocess.check_output(['pgrep', '-af', '/var/lib/juju/tools.*jujud'], text=True)
-
-        lines = res.strip().split('\n')
-        if len(lines) != 1:
-            raise ControllerProcessException(
-                'Unable to determine process for running controller')
-
-        parts = lines[0].split(' ', 1)
-        return (int(parts[0]), parts[1])
-
     def _request_config_reload(self):
-        """Set reload request to the config reload socket"""
-        self.config_change_socket.reload_config()
+        """Send a reload request to the config reload socket"""
+        self._config_change_socket.reload_config()
 
 
 def metrics_username(relation: Relation) -> str:
