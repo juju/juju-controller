@@ -3,6 +3,7 @@
 # Licensed under the GPLv3, see LICENSE file for details.
 
 import controlsocket
+import configchangesocket
 import json
 import logging
 import secrets
@@ -14,7 +15,7 @@ from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
 from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, ErrorStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, Relation
 from pathlib import Path
 from typing import List
 
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class JujuControllerCharm(CharmBase):
+    METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
+    CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
 
@@ -30,6 +33,23 @@ class JujuControllerCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
 
+        self._observe()
+
+        self._stored.set_default(
+            db_bind_address='',
+            last_bind_addresses=[],
+            all_bind_addresses=dict(),
+        )
+
+        # TODO (manadart 2024-03-05): Get these at need.
+        # No need to instantiate them for every invocatoin.
+        self._control_socket = controlsocket.ControlSocketClient(
+            socket_path=self.METRICS_SOCKET_PATH)
+        self._config_change_socket = configchangesocket.ConfigChangeSocketClient(
+            socket_path=self.CONFIG_SOCKET_PATH)
+
+    def _observe(self):
+        """Set up all framework event observers."""
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
@@ -37,18 +57,12 @@ class JujuControllerCharm(CharmBase):
             self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
         self.framework.observe(
             self.on.website_relation_joined, self._on_website_relation_joined)
-
-        self._stored.set_default(
-            db_bind_address='', last_bind_addresses=[], all_bind_addresses=dict())
-        self.framework.observe(
-            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
-
-        self.control_socket = controlsocket.Client(
-            socket_path='/var/lib/juju/control.socket')
         self.framework.observe(
             self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
         self.framework.observe(
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
+        self.framework.observe(
+            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
 
     def _on_install(self, event: InstallEvent):
         """Ensure that the controller configuration file exists."""
@@ -64,7 +78,7 @@ class JujuControllerCharm(CharmBase):
         try:
             self.api_port()
         except AgentConfException as e:
-            event.add_status(ErrorStatus(
+            event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
 
         event.add_status(ActiveStatus())
@@ -108,7 +122,7 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
-        self.control_socket.add_metrics_user(username, password)
+        self._control_socket.add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
         try:
@@ -141,7 +155,7 @@ class JujuControllerCharm(CharmBase):
 
     def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
         username = metrics_username(event.relation)
-        self.control_socket.remove_metrics_user(username)
+        self._control_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
         """Maintain our own bind address in relation data.
@@ -201,6 +215,8 @@ class JujuControllerCharm(CharmBase):
         self._stored.db_bind_address = ip
 
     def _update_config_file(self, bind_addresses):
+        logger.info('writing new DB cluster to config file: %s', bind_addresses)
+
         file_path = self._controller_config_path()
         with open(file_path) as conf_file:
             conf = yaml.safe_load(conf_file)
@@ -212,6 +228,7 @@ class JujuControllerCharm(CharmBase):
         with open(file_path, 'w') as conf_file:
             yaml.dump(conf, conf_file)
 
+        self._request_config_reload()
         self._stored.all_bind_addresses = bind_addresses
 
     def api_port(self) -> str:
@@ -241,8 +258,15 @@ class JujuControllerCharm(CharmBase):
             return agent_conf.get(key)
 
     def _controller_config_path(self) -> str:
-        unit_num = self.unit.name.split('/')[1]
-        return f'/var/lib/juju/agents/controller-{unit_num}/agent.conf'
+        """Interrogate the running controller jujud service to determine
+        the local controller ID, then use it to construct a config path.
+        """
+        controller_id = self._config_change_socket.get_controller_agent_id()
+        return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
+
+    def _request_config_reload(self):
+        """Send a reload request to the config reload socket"""
+        self._config_change_socket.reload_config()
 
 
 def metrics_username(relation: Relation) -> str:
@@ -259,7 +283,11 @@ def generate_password() -> str:
 
 
 class AgentConfException(Exception):
-    """Raised when there are errors reading info from agent.conf."""
+    """Raised when there are errors regarding agent configuration."""
+
+
+class ControllerProcessException(Exception):
+    """Raised when there are errors regarding detection of controller service or process."""
 
 
 if __name__ == "__main__":

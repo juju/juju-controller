@@ -5,19 +5,20 @@
 import io
 import unittest
 import urllib.error
-from controlsocket import Client, APIError, ConnectionError
+from controlsocket import ControlSocketClient
+from configchangesocket import ConfigChangeSocketClient
+from unixsocket import APIError, ConnectionError
 
 
 class TestClass(unittest.TestCase):
     def test_add_metrics_user_success(self):
         mock_opener = MockOpener(self)
-        control_socket = Client('fake_socket_path', opener=mock_opener)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
             method='POST',
             body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
-
             response=MockResponse(
                 headers=MockHeaders(content_type='application/json'),
                 body=r'{"message":"created user \"juju-metrics-r0\""}'
@@ -27,13 +28,12 @@ class TestClass(unittest.TestCase):
 
     def test_add_metrics_user_fail(self):
         mock_opener = MockOpener(self)
-        control_socket = Client('fake_socket_path', opener=mock_opener)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
             method='POST',
             body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
-
             error=urllib.error.HTTPError(
                 url='http://localhost/metrics-users',
                 code=409,
@@ -52,13 +52,12 @@ class TestClass(unittest.TestCase):
 
     def test_remove_metrics_user_success(self):
         mock_opener = MockOpener(self)
-        control_socket = Client('fake_socket_path', opener=mock_opener)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users/juju-metrics-r0',
             method='DELETE',
             body=None,
-
             response=MockResponse(
                 headers=MockHeaders(content_type='application/json'),
                 body=r'{"message":"deleted user \"juju-metrics-r0\""}'
@@ -68,13 +67,12 @@ class TestClass(unittest.TestCase):
 
     def test_remove_metrics_user_fail(self):
         mock_opener = MockOpener(self)
-        control_socket = Client('fake_socket_path', opener=mock_opener)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users/juju-metrics-r0',
             method='DELETE',
             body=None,
-
             error=urllib.error.HTTPError(
                 url='http://localhost/metrics-users/juju-metrics-r0',
                 code=404,
@@ -93,18 +91,47 @@ class TestClass(unittest.TestCase):
 
     def test_connection_error(self):
         mock_opener = MockOpener(self)
-        control_socket = Client('fake_socket_path', opener=mock_opener)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
             method='POST',
             body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
-
             error=urllib.error.URLError('could not connect to socket')
         )
 
         with self.assertRaisesRegex(ConnectionError, 'could not connect to socket'):
             control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+    def test_get_controller_agent_id(self):
+        mock_opener = MockOpener(self)
+        config_reload_socket = ConfigChangeSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/agent-id',
+            method='GET',
+            body=None,
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/text'),
+                body=b'666'
+            )
+        )
+
+        id = config_reload_socket.get_controller_agent_id()
+        self.assertEqual(id, '666')
+
+    def test_reload_config(self):
+        mock_opener = MockOpener(self)
+        config_reload_socket = ConfigChangeSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/reload',
+            method='POST',
+            body=None,
+            response=None,
+        )
+
+        config_reload_socket.reload_config()
 
 
 class MockOpener:
@@ -127,14 +154,14 @@ class MockOpener:
         else:
             self.test.assertEqual(request.data.decode('utf-8'), self.body)
 
-        if self.response:
-            return self.response
-        else:
+        if self.error:
             raise self.error
+        else:
+            return self.response
 
 
 class MockResponse:
-    def __init__(self, headers, body):
+    def __init__(self, headers, body=None):
         self.headers = headers
         self.body = body
 
@@ -143,7 +170,7 @@ class MockResponse:
 
 
 class MockHeaders:
-    def __init__(self, content_type, params=None):
+    def __init__(self, content_type=None, params=None):
         self.content_type = content_type
         self.params = params
 

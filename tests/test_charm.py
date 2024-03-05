@@ -5,10 +5,11 @@ import ipaddress
 import json
 import os
 import unittest
+
 import yaml
 
 from charm import JujuControllerCharm, AgentConfException
-from ops.model import BlockedStatus, ActiveStatus, ErrorStatus
+from ops.model import BlockedStatus, ActiveStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -84,8 +85,8 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("charm.MetricsEndpointProvider", autospec=True)
     @patch("charm.generate_password", new=lambda: "passwd")
-    @patch("controlsocket.Client.add_metrics_user")
-    @patch("controlsocket.Client.remove_metrics_user")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    @patch("controlsocket.ControlSocketClient.remove_metrics_user")
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
                                        mock_metrics_provider, _):
         harness = self.harness
@@ -132,40 +133,43 @@ class TestCharm(unittest.TestCase):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
-    @patch("controlsocket.Client.add_metrics_user")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
         harness = self.harness
 
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ErrorStatus)
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):
-        harness = self.harness
-
-        self.assertEqual(harness.charm.api_port(), 17070)
+        self.assertEqual(self.harness.charm.api_port(), 17070)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
     def test_apiaddresses_ipv6(self, _):
-        harness = self.harness
-
-        self.assertEqual(harness.charm.api_port(), 17070)
+        self.assertEqual(self.harness.charm.api_port(), 17070)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_single_addr(self, binding, _):
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_relation_changed_single_addr(
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
         harness = self.harness
-        binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+
+        mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
 
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
-        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
+
+        mock_reload_config.assert_called_once()
 
         unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
         self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
@@ -183,7 +187,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
 
-        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
 
         self.harness.update_relation_data(
@@ -192,11 +196,17 @@ class TestCharm(unittest.TestCase):
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
 
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("builtins.open", new_callable=mock_open)
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_write_file(self, binding, mock_open):
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_relation_changed_write_file(
+            self, mock_reload_config, mock_get_binding, mock_open, mock_get_agent_id):
+
         harness = self.harness
-        binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+
+        mock_get_agent_id.return_value = '0'
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -208,12 +218,12 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(mock_open.call_count, 2)
 
         # First call to read out the YAML
-        first_call_args, _ = mock_open.call_args_list[0]
-        self.assertEqual(first_call_args, (file_path,))
+        first_open_args, _ = mock_open.call_args_list[0]
+        self.assertEqual(first_open_args, (file_path,))
 
         # Second call to write the updated YAML.
-        second_call_args, _ = mock_open.call_args_list[1]
-        self.assertEqual(second_call_args, (file_path, 'w'))
+        second_open_args, _ = mock_open.call_args_list[1]
+        self.assertEqual(second_open_args, (file_path, 'w'))
 
         # yaml.dump appears to write the the file incrementally,
         # so we need to hoover up the call args to reconstruct.
@@ -222,6 +232,9 @@ class TestCharm(unittest.TestCase):
             written += args[0][0]
 
         self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
+
+        # The last thing we should have done is send a reload request via the socket..
+        mock_reload_config.assert_called_once()
 
 
 class mockNetwork:
