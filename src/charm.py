@@ -262,7 +262,7 @@ class JujuControllerCharm(CharmBase):
         the local controller ID, then use it to construct a config path.
         """
         controller_id = self._config_change_socket.get_controller_agent_id()
-        return f'/var/lib/juju/agents/controller-{controller_id}/agent.conf'
+        return f'/var/lib/juju/agents/controller-{controller_id}/controller.conf'
 
     def _request_config_reload(self):
         """Send a reload request to the config reload socket"""
