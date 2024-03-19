@@ -158,16 +158,21 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
+        # This unit's agent ID happends to correspond with the unit ID.
         mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
 
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
+        # Note that the agent ID doesn not correspond with the unit's ID
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
-            relation_id, 'juju-controller/1', {'db-bind-address': '192.168.1.100'})
+            relation_id, 'juju-controller/1', {
+                'db-bind-address': '192.168.1.100',
+                'agent-id': '9',
+            })
 
         mock_reload_config.assert_called_once()
 
@@ -176,7 +181,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(unit_data['agent-id'], '0')
 
         app_data = harness.get_relation_data(relation_id, 'juju-controller')
-        exp = {"juju-controller/0": "192.168.1.17", "juju-controller/1": "192.168.1.100"}
+        exp = {'0': '192.168.1.17', '9': '192.168.1.100'}
         self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
 
         harness.evaluate_status()

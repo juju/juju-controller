@@ -171,12 +171,13 @@ class JujuControllerCharm(CharmBase):
             # The event only has *other* units so include this
             # unit's bind address if we have managed to set it.
             ip = self._stored.db_bind_address
-            all_bind_addresses = {self.unit.name: ip} if ip else dict()
+            all_bind_addresses = {self._controller_agent_id(): ip} if ip else dict()
 
             for unit in relation.units:
                 unit_data = relation.data[unit]
                 if self.DB_BIND_ADDR_KEY in unit_data:
-                    all_bind_addresses[unit.name] = unit_data[self.DB_BIND_ADDR_KEY]
+                    agent_id = unit_data[self.AGENT_ID_KEY]
+                    all_bind_addresses[agent_id] = unit_data[self.DB_BIND_ADDR_KEY]
 
             if self._stored.all_bind_addresses == all_bind_addresses:
                 return
