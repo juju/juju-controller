@@ -173,6 +173,7 @@ class TestCharm(unittest.TestCase):
 
         unit_data = harness.get_relation_data(relation_id, 'juju-controller/0')
         self.assertEqual(unit_data['db-bind-address'], '192.168.1.17')
+        self.assertEqual(unit_data['agent-id'], '0')
 
         app_data = harness.get_relation_data(relation_id, 'juju-controller')
         exp = {"juju-controller/0": "192.168.1.17", "juju-controller/1": "192.168.1.100"}

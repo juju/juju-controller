@@ -27,6 +27,7 @@ class JujuControllerCharm(CharmBase):
     CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
+    AGENT_ID_KEY = 'agent-id'
 
     _stored = StoredState()
 
@@ -211,7 +212,10 @@ class JujuControllerCharm(CharmBase):
             return
 
         logger.info('setting new DB bind address: %s', ip)
-        relation.data[self.unit].update({self.DB_BIND_ADDR_KEY: ip})
+        relation.data[self.unit].update({
+            self.DB_BIND_ADDR_KEY: ip,
+            self.AGENT_ID_KEY: self._controller_agent_id()
+        })
         self._stored.db_bind_address = ip
 
     def _update_config_file(self, bind_addresses):
@@ -261,11 +265,14 @@ class JujuControllerCharm(CharmBase):
         """Interrogate the running controller jujud service to determine
         the local controller ID, then use it to construct a config path.
         """
-        controller_id = self._config_change_socket.get_controller_agent_id()
+        controller_id = self._controller_agent_id()
         return f'/var/lib/juju/agents/controller-{controller_id}/controller.conf'
 
+    def _controller_agent_id(self):
+        return self._config_change_socket.get_controller_agent_id()
+
     def _request_config_reload(self):
-        """Send a reload request to the config reload socket"""
+        """Send a reload request to the config reload socket."""
         self._config_change_socket.reload_config()
 
 
