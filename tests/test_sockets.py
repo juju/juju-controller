@@ -5,7 +5,7 @@
 import io
 import unittest
 import urllib.error
-from controlsocket import ControlSocketClient
+from metricsocket import MetricSocketClient
 from configchangesocket import ConfigChangeSocketClient
 from unixsocket import APIError, ConnectionError
 
@@ -13,7 +13,7 @@ from unixsocket import APIError, ConnectionError
 class TestClass(unittest.TestCase):
     def test_add_metrics_user_success(self):
         mock_opener = MockOpener(self)
-        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        metric_socket = MetricSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
@@ -24,11 +24,11 @@ class TestClass(unittest.TestCase):
                 body=r'{"message":"created user \"juju-metrics-r0\""}'
             )
         )
-        control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+        metric_socket.add_metrics_user('juju-metrics-r0', 'passwd')
 
     def test_add_metrics_user_fail(self):
         mock_opener = MockOpener(self)
-        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        metric_socket = MetricSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
@@ -44,7 +44,7 @@ class TestClass(unittest.TestCase):
         )
 
         with self.assertRaises(APIError) as cm:
-            control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+            metric_socket.add_metrics_user('juju-metrics-r0', 'passwd')
         self.assertEqual(cm.exception.body, {'error': 'user "juju-metrics-r0" already exists'})
         self.assertEqual(cm.exception.code, 409)
         self.assertEqual(cm.exception.status, '')
@@ -52,7 +52,7 @@ class TestClass(unittest.TestCase):
 
     def test_remove_metrics_user_success(self):
         mock_opener = MockOpener(self)
-        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        metric_socket = MetricSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users/juju-metrics-r0',
@@ -63,11 +63,11 @@ class TestClass(unittest.TestCase):
                 body=r'{"message":"deleted user \"juju-metrics-r0\""}'
             )
         )
-        control_socket.remove_metrics_user('juju-metrics-r0')
+        metric_socket.remove_metrics_user('juju-metrics-r0')
 
     def test_remove_metrics_user_fail(self):
         mock_opener = MockOpener(self)
-        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        metric_socket = MetricSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users/juju-metrics-r0',
@@ -83,7 +83,7 @@ class TestClass(unittest.TestCase):
         )
 
         with self.assertRaises(APIError) as cm:
-            control_socket.remove_metrics_user('juju-metrics-r0')
+            metric_socket.remove_metrics_user('juju-metrics-r0')
         self.assertEqual(cm.exception.body, {'error': 'user "juju-metrics-r0" not found'})
         self.assertEqual(cm.exception.code, 404)
         self.assertEqual(cm.exception.status, '')
@@ -91,7 +91,7 @@ class TestClass(unittest.TestCase):
 
     def test_connection_error(self):
         mock_opener = MockOpener(self)
-        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        metric_socket = MetricSocketClient('fake_socket_path', opener=mock_opener)
 
         mock_opener.expect(
             url='http://localhost/metrics-users',
@@ -101,7 +101,7 @@ class TestClass(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ConnectionError, 'could not connect to socket'):
-            control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+            metric_socket.add_metrics_user('juju-metrics-r0', 'passwd')
 
     def test_get_controller_agent_id(self):
         mock_opener = MockOpener(self)

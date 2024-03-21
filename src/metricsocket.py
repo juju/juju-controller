@@ -10,9 +10,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ControlSocketClient(unixsocket.SocketClient):
+class MetricSocketClient(unixsocket.SocketClient):
     """
-    Client to Juju control socket.
+    Client to Juju metric socket.
     """
     def __init__(self, socket_path: str,
                  opener: Optional[urllib.request.OpenerDirector] = None):

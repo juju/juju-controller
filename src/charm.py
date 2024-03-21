@@ -2,7 +2,7 @@
 # Copyright 2021 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 
-import controlsocket
+import metricsocket
 import configchangesocket
 import json
 import logging
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class JujuControllerCharm(CharmBase):
-    METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
+    METRICS_SOCKET_PATH = '/var/lib/juju/metric.socket'
     CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
@@ -44,7 +44,7 @@ class JujuControllerCharm(CharmBase):
 
         # TODO (manadart 2024-03-05): Get these at need.
         # No need to instantiate them for every invocatoin.
-        self._control_socket = controlsocket.ControlSocketClient(
+        self._metric_socket = metricsocket.MetricSocketClient(
             socket_path=self.METRICS_SOCKET_PATH)
         self._config_change_socket = configchangesocket.ConfigChangeSocketClient(
             socket_path=self.CONFIG_SOCKET_PATH)
@@ -123,7 +123,7 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
-        self._control_socket.add_metrics_user(username, password)
+        self._metric_socket.add_metrics_user(username, password)
 
         # Set up Prometheus scrape config
         try:
@@ -156,7 +156,7 @@ class JujuControllerCharm(CharmBase):
 
     def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
         username = metrics_username(event.relation)
-        self._control_socket.remove_metrics_user(username)
+        self._metric_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
         """Maintain our own bind address in relation data.

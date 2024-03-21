@@ -85,8 +85,8 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("charm.MetricsEndpointProvider", autospec=True)
     @patch("charm.generate_password", new=lambda: "passwd")
-    @patch("controlsocket.ControlSocketClient.add_metrics_user")
-    @patch("controlsocket.ControlSocketClient.remove_metrics_user")
+    @patch("metricsocket.MetricSocketClient.add_metrics_user")
+    @patch("metricsocket.MetricSocketClient.remove_metrics_user")
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
                                        mock_metrics_provider, _):
         harness = self.harness
@@ -133,7 +133,7 @@ class TestCharm(unittest.TestCase):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
-    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    @patch("metricsocket.MetricSocketClient.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
         harness = self.harness
 
