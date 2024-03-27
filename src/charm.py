@@ -39,7 +39,6 @@ class JujuControllerCharm(CharmBase):
         self._stored.set_default(
             db_bind_address='',
             last_bind_addresses=[],
-            all_bind_addresses=dict(),
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -179,9 +178,6 @@ class JujuControllerCharm(CharmBase):
                     agent_id = unit_data[self.AGENT_ID_KEY]
                     all_bind_addresses[agent_id] = unit_data[self.DB_BIND_ADDR_KEY]
 
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
-
             relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(all_bind_addresses)
             self._update_config_file(all_bind_addresses)
         else:
@@ -190,9 +186,6 @@ class JujuControllerCharm(CharmBase):
                 all_bind_addresses = json.loads(app_data[self.ALL_BIND_ADDRS_KEY])
             else:
                 all_bind_addresses = dict()
-
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
 
             self._update_config_file(all_bind_addresses)
 
