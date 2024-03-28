@@ -158,7 +158,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
-        # This unit's agent ID happends to correspond with the unit ID.
+        # This unit's agent ID happens to correspond with the unit ID.
         mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
@@ -246,6 +246,45 @@ class TestCharm(unittest.TestCase):
 
         # The last thing we should have done is send a reload request via the socket..
         mock_reload_config.assert_called_once()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
+    @patch("ops.model.Model.get_binding")
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_relation_departed(
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
+        harness = self.harness
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+
+        # This unit's agent ID happens to correspond with the unit ID.
+        mock_get_agent_id.return_value = '0'
+
+        harness.set_leader()
+
+        # Have another unit enter the relation.
+        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        harness.add_relation_unit(relation_id, 'juju-controller/1')
+        self.harness.update_relation_data(
+            relation_id, 'juju-controller/1', {
+                'db-bind-address': '192.168.1.100',
+                'agent-id': '9',
+            })
+
+        # Assert that the second units agent bind address is in the data bag.
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        exp = {'0': '192.168.1.17', '9': '192.168.1.100'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
+
+        # Remove the second unit.
+        harness.remove_relation_unit(relation_id, 'juju-controller/1')
+
+        # Assert that the second unit's address is gone from the data bag.
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        exp = {'0': '192.168.1.17'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
+
+        harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
 
 class mockNetwork:
