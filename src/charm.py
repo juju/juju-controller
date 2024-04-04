@@ -62,6 +62,8 @@ class JujuControllerCharm(CharmBase):
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
         self.framework.observe(
             self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
+        self.framework.observe(
+            self.on.dbcluster_relation_departed, self._on_dbcluster_relation_departed)
 
     def _on_install(self, event: InstallEvent):
         """Ensure that the controller configuration file exists."""
@@ -157,12 +159,20 @@ class JujuControllerCharm(CharmBase):
         self._control_socket.remove_metrics_user(username)
 
     def _on_dbcluster_relation_changed(self, event):
+        relation = event.relation
+        self._update_bind_addresses(relation)
+
+    def _on_dbcluster_relation_departed(self, event):
+        relation = event.relation
+        self._update_bind_addresses(relation)
+
+    def _update_bind_addresses(self, relation):
         """Maintain our own bind address in relation data.
         If we are the leader, aggregate the bind addresses for all the peers,
         and ensure the result is set in the application data bag.
         If the aggregate addresses have changed, rewrite the config file.
         """
-        relation = event.relation
+
         try:
             ip = self._set_db_bind_address(relation)
         except DBBindAddressException as e:
