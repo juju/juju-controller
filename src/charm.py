@@ -37,9 +37,7 @@ class JujuControllerCharm(CharmBase):
         self._observe()
 
         self._stored.set_default(
-            db_bind_address='',
             last_bind_addresses=[],
-            all_bind_addresses=dict(),
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -165,12 +163,15 @@ class JujuControllerCharm(CharmBase):
         If the aggregate addresses have changed, rewrite the config file.
         """
         relation = event.relation
-        self._ensure_db_bind_address(relation)
+        try:
+            ip = self._set_db_bind_address(relation)
+        except DBBindAddressException as e:
+            logger.error(e)
+            ip = None
 
         if self.unit.is_leader():
             # The event only has *other* units so include this
             # unit's bind address if we have managed to set it.
-            ip = self._stored.db_bind_address
             all_bind_addresses = {self._controller_agent_id(): ip} if ip else dict()
 
             for unit in relation.units:
@@ -179,10 +180,8 @@ class JujuControllerCharm(CharmBase):
                     agent_id = unit_data[self.AGENT_ID_KEY]
                     all_bind_addresses[agent_id] = unit_data[self.DB_BIND_ADDR_KEY]
 
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
-
-            relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(all_bind_addresses)
+            relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(
+                all_bind_addresses, sort_keys=True)
             self._update_config_file(all_bind_addresses)
         else:
             app_data = relation.data[self.app]
@@ -191,33 +190,28 @@ class JujuControllerCharm(CharmBase):
             else:
                 all_bind_addresses = dict()
 
-            if self._stored.all_bind_addresses == all_bind_addresses:
-                return
-
             self._update_config_file(all_bind_addresses)
 
-    def _ensure_db_bind_address(self, relation):
-        """Ensure that a bind address for Dqlite is set in relation data,
-        if we can determine a unique one from the relation's bound space.
+    def _set_db_bind_address(self, relation):
+        """Set a db bind address for Dqlite in relation data, if we can
+        determine a unique one from the relation's bound space.
+
+        Returns the db bind address.
         """
         ips = [str(ip) for ip in self.model.get_binding(relation).network.ingress_addresses]
         self._stored.last_bind_addresses = ips
+        ip = ips[0]
 
         if len(ips) > 1:
-            logger.error(
-                'multiple possible DB bind addresses; set a suitable cluster network binding')
-            return
+            raise DBBindAddressException(
+                'multiple possible DB bind addresses;set a suitable cluster network binding')
 
-        ip = ips[0]
-        if self._stored.db_bind_address == ip:
-            return
-
-        logger.info('setting new DB bind address: %s', ip)
+        logger.info('setting DB bind address: %s', ip)
         relation.data[self.unit].update({
             self.DB_BIND_ADDR_KEY: ip,
             self.AGENT_ID_KEY: self._controller_agent_id()
         })
-        self._stored.db_bind_address = ip
+        return ip
 
     def _update_config_file(self, bind_addresses):
         logger.info('writing new DB cluster to config file: %s', bind_addresses)
@@ -296,6 +290,10 @@ class AgentConfException(Exception):
 
 class ControllerProcessException(Exception):
     """Raised when there are errors regarding detection of controller service or process."""
+
+
+class DBBindAddressException(Exception):
+    """Raised when there are errors regarding the database bind addresses"""
 
 
 if __name__ == "__main__":

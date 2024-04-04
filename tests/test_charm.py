@@ -188,10 +188,14 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
-    def test_dbcluster_relation_changed_multi_addr_error(self, binding, _):
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_relation_changed_multi_addr_error(
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *_):
         harness = self.harness
-        binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
+        mock_get_binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
+        mock_get_agent_id.return_value = '0'
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -201,6 +205,7 @@ class TestCharm(unittest.TestCase):
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        mock_reload_config.assert_called_once()
 
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("builtins.open", new_callable=mock_open)
