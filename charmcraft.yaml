@@ -5,20 +5,30 @@ parts:
 bases:
     - build-on:
         - name: ubuntu
-          channel: "22.04"
+          channel: "24.04"
           architectures: ["amd64"]
       run-on:
         - name: ubuntu
-          channel: "22.04"
-          architectures: 
+          channel: "24.04"
+          architectures:
               - amd64
-              - aarch64
               - arm64
               - s390x
+              - ppc64el
+              - riscv64
+        - name: ubuntu
+          channel: "22.04"
+          architectures:
+              - amd64
+              - arm64
+              - s390x
+              - ppc64el
+              - riscv64
         - name: ubuntu
           channel: "20.04"
-          architectures: 
+          architectures:
               - amd64
-              - aarch64
               - arm64
               - s390x
+              - ppc64el
+              - riscv64
