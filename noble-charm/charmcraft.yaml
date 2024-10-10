@@ -1,0 +1,25 @@
+type: charm
+name: juju-controller
+assumes:
+- juju >= 3.0
+description: |
+  The Juju controller charm is used to expose various pieces
+  of functionality of a Juju controller.
+summary: |
+  The Juju controller.
+links:
+  documentation: https://discourse.charmhub.io/t/10534
+provides:
+  dashboard:
+    interface: juju-dashboard
+  website:
+    interface: http
+base: ubuntu@24.04
+platforms:
+  amd64:
+  arm64:
+  s390x:
+parts:
+  charm:
+    plugin: charm
+    charm-python-packages: [setuptools,markdown]
