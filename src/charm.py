@@ -131,7 +131,7 @@ class JujuControllerCharm(CharmBase):
         except AgentConfException as e:
             logger.error('cannot read controller API port from agent configuration: %s', e)
             self.unit.status = BlockedStatus(
-                f"can't read controller API port from agent.conf: {e}")
+                f"cannot read controller API port from agent configuration: {e}")
             return
 
         metrics_endpoint = MetricsEndpointProvider(

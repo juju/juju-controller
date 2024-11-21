@@ -140,7 +140,8 @@ class TestCharm(unittest.TestCase):
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
         self.assertEqual(harness.charm.unit.status, BlockedStatus(
-            "can't read controller API port from agent.conf: agent.conf key 'apiaddresses' missing"
+            "cannot read controller API port from agent configuration: "
+            "agent.conf key 'apiaddresses' missing"
         ))
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
