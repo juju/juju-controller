@@ -7,19 +7,15 @@ import logging
 import secrets
 import urllib.parse
 import yaml
+import ops
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from ops.charm import CharmBase
-from ops.framework import StoredState
-from ops.charm import RelationJoinedEvent, RelationDepartedEvent
-from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, Relation
 from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-class JujuControllerCharm(CharmBase):
-    _stored = StoredState()
+class JujuControllerCharm(ops.CharmBase):
+    _stored = ops.StoredState()
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -38,7 +34,7 @@ class JujuControllerCharm(CharmBase):
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
 
     def _on_start(self, _):
-        self.unit.status = ActiveStatus()
+        self.unit.status = ops.ActiveStatus()
 
     def _on_config_changed(self, _):
         controller_url = self.config["controller-url"]
@@ -61,7 +57,7 @@ class JujuControllerCharm(CharmBase):
         port = self.api_port()
         if port is None:
             logger.error("machine does not appear to be a controller")
-            self.unit.status = BlockedStatus('machine does not appear to be a controller')
+            self.unit.status = ops.BlockedStatus('machine does not appear to be a controller')
             return
 
         address = None
@@ -75,7 +71,7 @@ class JujuControllerCharm(CharmBase):
                     'port': str(port)
                 })
 
-    def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
+    def _on_metrics_endpoint_relation_created(self, event: ops.RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
         self.control_socket.add_metrics_user(username, password)
@@ -84,7 +80,7 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            self.unit.status = BlockedStatus(
+            self.unit.status = ops.BlockedStatus(
                 f"can't read controller API port from agent.conf: {e}")
             return
 
@@ -110,7 +106,7 @@ class JujuControllerCharm(CharmBase):
         )
         metrics_endpoint.set_scrape_job_spec()
 
-    def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
+    def _on_metrics_endpoint_relation_broken(self, event: ops.RelationDepartedEvent):
         username = metrics_username(event.relation)
         self.control_socket.remove_metrics_user(username)
 
@@ -141,7 +137,7 @@ class JujuControllerCharm(CharmBase):
         return self._agent_conf('cacert')
 
 
-def metrics_username(relation: Relation) -> str:
+def metrics_username(relation: ops.Relation) -> str:
     """
     Return the username used to access the metrics endpoint, for the given
     relation. This username has the form
@@ -159,4 +155,4 @@ class AgentConfException(Exception):
 
 
 if __name__ == "__main__":
-    main(JujuControllerCharm)
+    ops.main(JujuControllerCharm)
