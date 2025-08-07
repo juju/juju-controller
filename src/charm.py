@@ -9,6 +9,8 @@ import logging
 import secrets
 import urllib.parse
 import yaml
+import tempfile
+import os
 
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops.charm import CharmBase, CollectStatusEvent
@@ -234,8 +236,13 @@ class JujuControllerCharm(CharmBase):
             conf = dict()
         conf[self.ALL_BIND_ADDRS_KEY] = bind_addresses
 
-        with open(file_path, 'w') as conf_file:
-            yaml.dump(conf, conf_file)
+        dir_name = os.path.dirname(file_path)
+        with tempfile.NamedTemporaryFile('w', dir=dir_name, delete=False) as tmp_file:
+            yaml.dump(conf, tmp_file)
+            temp_name = tmp_file.name
+
+        os.replace(temp_name, file_path)
+        os.remove(temp_name)
 
         self._request_config_reload()
         self._stored.all_bind_addresses = bind_addresses
