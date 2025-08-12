@@ -2,6 +2,8 @@ type: charm
 parts:
   charm:
     charm-python-packages: [setuptools,markdown]
+    build-packages:
+      - cargo
 bases:
     - build-on:
         - name: ubuntu

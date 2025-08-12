@@ -10,6 +10,7 @@ import yaml
 
 from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus
+from ops import BlockedStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -140,6 +141,9 @@ class TestCharm(unittest.TestCase):
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(harness.charm.unit.status, BlockedStatus(
+            "can't read controller API port from agent.conf: agent.conf key 'apiaddresses' missing"
+        ))
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):

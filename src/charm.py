@@ -9,27 +9,21 @@ import logging
 import secrets
 import urllib.parse
 import yaml
-
+import ops
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from ops.charm import CharmBase, CollectStatusEvent
-from ops.framework import StoredState
-from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
-from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, Relation
-from pathlib import Path
 from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-class JujuControllerCharm(CharmBase):
+class JujuControllerCharm(ops.CharmBase):
     METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
     CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
     AGENT_ID_KEY = 'agent-id'
 
-    _stored = StoredState()
+    _stored = ops.StoredState()
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -71,9 +65,12 @@ class JujuControllerCharm(CharmBase):
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
         open(file_path, 'w+').close()
 
+    def _on_start(self, _):
+        self.unit.status = ops.ActiveStatus()
+
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:
-            event.add_status(BlockedStatus(
+            event.add_status(ops.BlockedStatus(
                 'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
         try:
@@ -82,7 +79,7 @@ class JujuControllerCharm(CharmBase):
             event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
 
-        event.add_status(ActiveStatus())
+        event.add_status(ops.ActiveStatus())
 
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
@@ -101,12 +98,11 @@ class JujuControllerCharm(CharmBase):
 
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
-        logger.info('got a new website relation: %r', event)
-
-        try:
-            api_port = self.api_port()
-        except AgentConfException as e:
-            logger.error('cannot read controller API port from agent configuration: %s', e)
+        logger.info("got a new website relation: %r", event)
+        port = self.api_port()
+        if port is None:
+            logger.error("machine does not appear to be a controller")
+            self.unit.status = ops.BlockedStatus('machine does not appear to be a controller')
             return
 
         address = None
@@ -120,7 +116,7 @@ class JujuControllerCharm(CharmBase):
                     'port': str(api_port)
                 })
 
-    def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
+    def _on_metrics_endpoint_relation_created(self, event: ops.RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
         self._control_socket.add_metrics_user(username, password)
@@ -129,6 +125,8 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
+            self.unit.status = ops.BlockedStatus(
+                f"can't read controller API port from agent.conf: {e}")
             logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
@@ -154,7 +152,7 @@ class JujuControllerCharm(CharmBase):
         )
         metrics_endpoint.set_scrape_job_spec()
 
-    def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
+    def _on_metrics_endpoint_relation_broken(self, event: ops.RelationDepartedEvent):
         username = metrics_username(event.relation)
         self._control_socket.remove_metrics_user(username)
 
@@ -281,7 +279,7 @@ class JujuControllerCharm(CharmBase):
         self._config_change_socket.reload_config()
 
 
-def metrics_username(relation: Relation) -> str:
+def metrics_username(relation: ops.Relation) -> str:
     """
     Return the username used to access the metrics endpoint, for the given
     relation. This username has the form
@@ -307,4 +305,4 @@ class DBBindAddressException(Exception):
 
 
 if __name__ == "__main__":
-    main(JujuControllerCharm)
+    ops.main(JujuControllerCharm)
