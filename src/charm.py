@@ -9,21 +9,27 @@ import logging
 import secrets
 import urllib.parse
 import yaml
-import ops
+
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from ops.charm import CharmBase, CollectStatusEvent
+from ops.framework import StoredState
+from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
+from ops.main import main
+from ops.model import ActiveStatus, BlockedStatus, Relation
+from pathlib import Path
 from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-class JujuControllerCharm(ops.CharmBase):
+class JujuControllerCharm(CharmBase):
     METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
     CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
     AGENT_ID_KEY = 'agent-id'
 
-    _stored = ops.StoredState()
+    _stored = StoredState()
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -66,11 +72,11 @@ class JujuControllerCharm(ops.CharmBase):
         open(file_path, 'w+').close()
 
     def _on_start(self, _):
-        self.unit.status = ops.ActiveStatus()
+        self.unit.status = ActiveStatus()
 
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:
-            event.add_status(ops.BlockedStatus(
+            event.add_status(BlockedStatus(
                 'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
 
         try:
@@ -79,7 +85,7 @@ class JujuControllerCharm(ops.CharmBase):
             event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
 
-        event.add_status(ops.ActiveStatus())
+        event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
@@ -102,7 +108,7 @@ class JujuControllerCharm(ops.CharmBase):
         port = self.api_port()
         if port is None:
             logger.error("machine does not appear to be a controller")
-            self.unit.status = ops.BlockedStatus('machine does not appear to be a controller')
+            self.unit.status = BlockedStatus('machine does not appear to be a controller')
             return
 
         address = None
@@ -116,7 +122,7 @@ class JujuControllerCharm(ops.CharmBase):
                     'port': str(api_port)
                 })
 
-    def _on_metrics_endpoint_relation_created(self, event: ops.RelationJoinedEvent):
+    def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
         username = metrics_username(event.relation)
         password = generate_password()
         self._control_socket.add_metrics_user(username, password)
@@ -125,7 +131,7 @@ class JujuControllerCharm(ops.CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
-            self.unit.status = ops.BlockedStatus(
+            self.unit.status = BlockedStatus(
                 f"can't read controller API port from agent.conf: {e}")
             logger.error('cannot read controller API port from agent configuration: %s', e)
             return
@@ -152,7 +158,7 @@ class JujuControllerCharm(ops.CharmBase):
         )
         metrics_endpoint.set_scrape_job_spec()
 
-    def _on_metrics_endpoint_relation_broken(self, event: ops.RelationDepartedEvent):
+    def _on_metrics_endpoint_relation_broken(self, event: RelationDepartedEvent):
         username = metrics_username(event.relation)
         self._control_socket.remove_metrics_user(username)
 
@@ -279,7 +285,7 @@ class JujuControllerCharm(ops.CharmBase):
         self._config_change_socket.reload_config()
 
 
-def metrics_username(relation: ops.Relation) -> str:
+def metrics_username(relation: Relation) -> str:
     """
     Return the username used to access the metrics endpoint, for the given
     relation. This username has the form
@@ -305,4 +311,5 @@ class DBBindAddressException(Exception):
 
 
 if __name__ == "__main__":
-    ops.main(JujuControllerCharm)
+
+    main(JujuControllerCharm)
