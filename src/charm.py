@@ -71,6 +71,9 @@ class JujuControllerCharm(CharmBase):
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
         open(file_path, 'w+').close()
 
+    def _on_start(self, _):
+        self.unit.status = ActiveStatus()
+
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:
             event.add_status(BlockedStatus(
@@ -101,12 +104,11 @@ class JujuControllerCharm(CharmBase):
 
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
-        logger.info('got a new website relation: %r', event)
-
-        try:
-            api_port = self.api_port()
-        except AgentConfException as e:
-            logger.error('cannot read controller API port from agent configuration: %s', e)
+        logger.info("got a new website relation: %r", event)
+        port = self.api_port()
+        if port is None:
+            logger.error("machine does not appear to be a controller")
+            self.unit.status = BlockedStatus('machine does not appear to be a controller')
             return
 
         address = None
@@ -129,6 +131,8 @@ class JujuControllerCharm(CharmBase):
         try:
             api_port = self.api_port()
         except AgentConfException as e:
+            self.unit.status = BlockedStatus(
+                f"can't read controller API port from agent.conf: {e}")
             logger.error('cannot read controller API port from agent configuration: %s', e)
             return
 
@@ -307,4 +311,5 @@ class DBBindAddressException(Exception):
 
 
 if __name__ == "__main__":
+
     main(JujuControllerCharm)

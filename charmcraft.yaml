@@ -2,10 +2,12 @@ type: charm
 parts:
   charm:
     charm-python-packages: [setuptools,markdown]
+    build-packages:
+      - cargo
 bases:
     - build-on:
         - name: ubuntu
-          channel: "24.04"
+          channel: "22.04"
           architectures: ["amd64"]
       run-on:
         - name: ubuntu
