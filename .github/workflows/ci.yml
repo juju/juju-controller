@@ -34,7 +34,7 @@ jobs:
   build:
     name: Build charms
     needs: unit-tests
-    uses: canonical/data-platform-workflows/.github/workflows/build_charms_with_cache.yaml@v4
+    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v32.2.1
     with:
       charmcraft-snap-channel: 2.x/stable
       artifact-name: charm-packed
@@ -94,7 +94,7 @@ jobs:
         env:
           CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
         run: |
-          sudo snap install charmcraft --channel 2.x/stable --classic
+          sudo snap install charmcraft --channel 3.x/stable --classic
           charmcraft upload ${{ steps.download.outputs.download-path }}/*.charm \
             --name $CHARM_NAME \
             --release ${{ needs.channel.outputs.test }}
@@ -189,7 +189,7 @@ jobs:
     steps:
     - name: Install Charmcraft
       run: |
-        sudo snap install charmcraft --channel 2.x/stable --classic
+        sudo snap install charmcraft --channel 3.x/stable --classic
 
     - name: Get uploaded revision
       id: revision
