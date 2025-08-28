@@ -2,6 +2,8 @@ type: charm
 parts:
   charm:
     charm-python-packages: [setuptools,markdown]
+    build-packages:
+      - cargo
 
 platforms:
   ubuntu@22.04:amd64:
