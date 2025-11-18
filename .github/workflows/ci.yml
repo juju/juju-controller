@@ -37,7 +37,7 @@ jobs:
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v32.2.1
     with:
       charmcraft-snap-channel: 2.x/stable
-      artifact-name: charm-packed
+      artifact-prefix: charm-packed
 
 
   channel:
