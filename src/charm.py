@@ -119,7 +119,7 @@ class JujuControllerCharm(CharmBase):
                 event.relation.data[self.unit].update({
                     'hostname': str(address),
                     'private-address': str(address),
-                    'port': str(api_port)
+                    'port': str(port)
                 })
 
     def _on_metrics_endpoint_relation_created(self, event: RelationJoinedEvent):
