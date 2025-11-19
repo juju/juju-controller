@@ -10,7 +10,6 @@ import yaml
 
 from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus
-from ops import BlockedStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 
@@ -141,9 +140,13 @@ class TestCharm(unittest.TestCase):
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
-        self.assertEqual(harness.charm.unit.status, BlockedStatus(
-            "can't read controller API port from agent.conf: agent.conf key 'apiaddresses' missing"
-        ))
+        self.assertEqual(
+            harness.charm.unit.status,
+            BlockedStatus(
+                "cannot read controller API port from agent configuration: "
+                "agent.conf key 'apiaddresses' missing"
+            )
+        )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):
@@ -170,7 +173,7 @@ class TestCharm(unittest.TestCase):
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
         # Note that the agent ID doesn not correspond with the unit's ID
-        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {
@@ -201,7 +204,7 @@ class TestCharm(unittest.TestCase):
         mock_get_binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
         mock_get_agent_id.return_value = '0'
 
-        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
 
         self.harness.update_relation_data(
@@ -223,7 +226,7 @@ class TestCharm(unittest.TestCase):
 
         mock_get_agent_id.return_value = '0'
 
-        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         bound = {'juju-controller/0': '192.168.1.17', 'juju-controller/1': '192.168.1.100'}
         self.harness.update_relation_data(
@@ -266,7 +269,7 @@ class TestCharm(unittest.TestCase):
         harness.set_leader()
 
         # Have another unit enter the relation.
-        relation_id = harness.add_relation('dbcluster', harness.charm.app)
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
         self.harness.update_relation_data(
             relation_id, 'juju-controller/1', {
