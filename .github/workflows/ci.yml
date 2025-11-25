@@ -21,23 +21,34 @@ jobs:
 
     - name: Set up Python
       uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Create uv virtualenv
+      run: uv venv
 
     - name: Install dependencies for testing
       run: |
-        pip install -r requirements-dev.txt
+        source .venv/bin/activate
+        uv pip install ".[dev]"
 
     - name: Run tests
       run: |
+        source .venv/bin/activate
         ./run_tests
 
 
   build:
     name: Build charms
     needs: unit-tests
-    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v32.2.1
+    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v39.1.0
     with:
-      charmcraft-snap-channel: 2.x/stable
+      charmcraft-snap-channel: 3.x/stable
       artifact-prefix: charm-packed
+      cache: false  
 
 
   channel:
@@ -144,7 +155,7 @@ jobs:
 
     - name: Install Juju
       run: |
-        sudo snap install juju --channel 4.0/beta
+        sudo snap install juju --channel 4.0/stable
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
