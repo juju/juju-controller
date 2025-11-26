@@ -22,7 +22,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12'
+        python-version: '3.10'
 
     - name: Install uv
       run: pip install uv
@@ -40,16 +40,41 @@ jobs:
         source .venv/bin/activate
         ./run_tests
 
-
   build:
-    name: Build charms
+    name: Build charm
     needs: unit-tests
-    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v39.1.0
-    with:
-      charmcraft-snap-channel: 3.x/stable
-      artifact-prefix: charm-packed
-      cache: false  
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Set up LXD
+        uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
+
+      - name: Add runner to lxd group
+        run: |
+          sudo usermod -a -G lxd $USER
+          newgrp lxd
+
+      - name: Install charmcraft
+        run: sudo snap install charmcraft --classic --channel=3.x/stable
+
+      - name: Pack charm
+        run: sg lxd -c "charmcraft pack"
+
+      - name: Upload charm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: charm
+          path: "*.charm"
 
   channel:
     name: Select Charmhub channel
@@ -95,20 +120,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download packed charm
         id: download
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact-name }}
+          name: charm
 
-      - name: Upload charm to Charmhub
+      - name: Upload charms to Charmhub
         env:
           CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
         run: |
           sudo snap install charmcraft --channel 3.x/stable --classic
-          charmcraft upload ${{ steps.download.outputs.download-path }}/*.charm \
-            --name $CHARM_NAME \
-            --release ${{ needs.channel.outputs.test }}
+          for FILE in *.charm; do
+            echo "Uploading: $FILE"
+            charmcraft upload --name "$CHARM_NAME" --release "${{ needs.channel.outputs.test }}" "$FILE" 
+          done
 
 
   integration:
@@ -125,26 +154,22 @@ jobs:
     steps:
     - name: Download packed charm
       id: download
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
-        name: ${{ needs.build.outputs.artifact-name }}
+        name: charm
 
     - name: Rename charm file
       run: |
-        mv ${{ steps.download.outputs.download-path }}/*.charm \
+        mv *.charm \
           $LOCAL_CHARM_PATH
 
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: charmcraft-upload-logs
         path: ~/.local/state/charmcraft/log/
       continue-on-error: true
-
-    - name: Set up LXD
-      if: matrix.cloud == 'lxd'
-      uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
 
     - name: Set up MicroK8s
       if: matrix.cloud == 'microk8s'
