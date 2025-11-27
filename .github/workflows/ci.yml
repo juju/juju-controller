@@ -91,7 +91,7 @@ jobs:
         set -eux
         case ${{ github.ref_name }} in
           3.* | 4.*)
-            TRACK="${{ github.ref_name }}"
+            TRACK=$(echo "${{ github.ref_name }}" | awk -F "-" '{print $1}')
             DO_RELEASE=true
             ;;
           main)
