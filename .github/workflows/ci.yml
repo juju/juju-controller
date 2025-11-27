@@ -148,8 +148,6 @@ jobs:
       fail-fast: false
       matrix:
         cloud: ["lxd", "microk8s"]
-    env:
-      LOCAL_CHARM_PATH: ${{ github.workspace }}/controller.charm
 
     steps:
     - name: Download packed charm
@@ -160,8 +158,12 @@ jobs:
 
     - name: Rename charm file
       run: |
-        mv *.charm \
-          $LOCAL_CHARM_PATH
+        ls -la ${{ github.workspace }}
+        for FILE in *.charm; do
+          mv $FILE controller.charm
+          break
+        done
+        ls -la ${{ github.workspace }}
 
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
@@ -171,9 +173,13 @@ jobs:
         path: ~/.local/state/charmcraft/log/
       continue-on-error: true
 
+    - name: Setup LXD
+      if: matrix.cloud == 'lxd'
+      uses: canonical/setup-lxd@2fa6235ef2dfd3288e0de09edac03f2ebf922968
+
     - name: Set up MicroK8s
       if: matrix.cloud == 'microk8s'
-      uses: balchua/microk8s-actions@v0.3.1
+      uses: balchua/microk8s-actions@v0.4.2
       with:
         channel: "1.25-strict/stable"
         addons: '["dns", "hostpath-storage"]'
@@ -186,21 +192,19 @@ jobs:
       if: matrix.cloud == 'lxd'
       run: |
         juju bootstrap lxd c \
-          --controller-charm-path=$LOCAL_CHARM_PATH
+          --controller-charm-path=./controller.charm
 
     - name: Bootstrap on MicroK8s
       if: matrix.cloud == 'microk8s'
       run: |
         sg snap_microk8s <<EOF
           juju bootstrap microk8s c \
-            --controller-charm-path=$CHARM_NAME \
             --controller-charm-channel=${{ needs.channel.outputs.test }}
         EOF
 
     - name: Check charm status
       run: |
         juju switch controller
-        juju wait-for application controller --timeout 1m
         juju status
 
     - name: Get some info for debugging
