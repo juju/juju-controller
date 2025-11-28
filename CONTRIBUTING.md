@@ -1,17 +1,20 @@
 # Development guide
 
-You will need to have Python 3 and Charmcraft installed.
+You will need to have Python 3, Charmcraft and [uv](https://docs.astral.sh/uv/) installed.
 ```
 sudo snap install charmcraft --classic
+sudo snap install astral-uv --classic
 ```
 
 ## Setting up the environment
 
 Create and activate a virtualenv with the development requirements:
 
-    virtualenv -p python3 venv
-    source venv/bin/activate
-    pip install -r requirements-dev.txt
+```
+uv venv
+source .venv/bin/activate
+uv pip install ".[dev]"
+```
 
 ## Testing
 

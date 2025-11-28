@@ -1,9 +1,11 @@
 type: charm
+
 parts:
   charm:
-    charm-python-packages: [setuptools,markdown]
-    build-packages:
-      - cargo
+    plugin: uv
+    source: .
+    build-packages: [git]
+    build-snaps: [astral-uv]
 
 platforms:
   ubuntu@22.04:amd64:
