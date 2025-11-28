@@ -1,9 +1,11 @@
 type: charm
+
 parts:
   charm:
-    charm-python-packages: [setuptools,markdown]
-    build-packages:
-      - cargo
+    plugin: uv
+    source: .
+    build-packages: [git]
+    build-snaps: [astral-uv]
 bases:
     - build-on:
         - name: ubuntu
@@ -12,21 +14,21 @@ bases:
       run-on:
         - name: ubuntu
           channel: "24.04"
-          architectures: 
+          architectures:
               - amd64
               - arm64
               - s390x
               - ppc64el
         - name: ubuntu
           channel: "22.04"
-          architectures: 
+          architectures:
               - amd64
               - arm64
               - s390x
               - ppc64el
         - name: ubuntu
           channel: "20.04"
-          architectures: 
+          architectures:
               - amd64
               - arm64
               - s390x
