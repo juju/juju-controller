@@ -150,21 +150,6 @@ jobs:
         cloud: ["lxd", "microk8s"]
 
     steps:
-    - name: Download packed charm
-      id: download
-      uses: actions/download-artifact@v4
-      with:
-        name: charm
-
-    - name: Rename charm file
-      run: |
-        ls -la ${{ github.workspace }}
-        for FILE in *.charm; do
-          mv $FILE controller.charm
-          break
-        done
-        ls -la ${{ github.workspace }}
-
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
       uses: actions/upload-artifact@v4
@@ -192,7 +177,7 @@ jobs:
       if: matrix.cloud == 'lxd'
       run: |
         juju bootstrap lxd c \
-          --controller-charm-path=./controller.charm
+          --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Bootstrap on MicroK8s
       if: matrix.cloud == 'microk8s'
