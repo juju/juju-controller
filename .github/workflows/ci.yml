@@ -207,13 +207,26 @@ jobs:
         juju switch controller
         juju status
 
+        start_time="$(date -u +%s)"
+        until [[ $(juju status --format=json 2>/dev/null | jq -r '.applications.controller["application-status"].current') == "active" ]]; do
+          echo "Waiting for controller to become active..."
+          juju status
+          sleep 10
+
+          elapsed=$(date -u +%s)-${start_time}
+          if [[ ${elapsed} -ge 600 ]]; then
+            echo "Timed out waiting for controller to become active"
+            juju status
+            exit 1
+          fi
+        done
+
     - name: Get some info for debugging
       if: failure()
       run: |
         set -x
         set +e
         juju status
-        juju status --format json
-        juju debug-log -m controller
+        juju debug-log -m controller --replay
 
     # TODO: test integration with dashboard / ha-proxy
