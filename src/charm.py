@@ -99,7 +99,7 @@ class JujuControllerCharm(ops.CharmBase):
                     "password": password,
                 },
                 "tls_config": {
-                    "ca_file": self.ca_cert(),
+                    "ca": self.ca_cert(),
                     "server_name": "juju-apiserver",
                 },
             }],
