@@ -102,7 +102,7 @@ class TestCharm(unittest.TestCase):
                     "password": 'passwd',
                 },
                 "tls_config": {
-                    "ca_file": 'fake',
+                    "ca": 'fake',
                     "server_name": "juju-apiserver",
                 },
             }],
