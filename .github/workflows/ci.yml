@@ -65,7 +65,9 @@ jobs:
           newgrp lxd
 
       - name: Install charmcraft
-        run: sudo snap install charmcraft --classic --channel=3.x/stable
+        # We use latest because there's no 4.x track yet.
+        # We currently need edge to get 26.04 support.
+        run: sudo snap install charmcraft --classic --channel=latest/edge
 
       - name: Pack charm
         run: sg lxd -c "charmcraft pack"
@@ -133,7 +135,9 @@ jobs:
         env:
           CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
         run: |
-          sudo snap install charmcraft --channel 3.x/stable --classic
+          # We use latest because there's no 4.x track yet.
+          # We currently need edge to get 26.04 support.
+          sudo snap install charmcraft --channel latest/stable --classic
           for FILE in *.charm; do
             echo "Uploading: $FILE"
             charmcraft upload --name "$CHARM_NAME" --release "${{ needs.channel.outputs.test }}" "$FILE" 
