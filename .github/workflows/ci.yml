@@ -170,7 +170,7 @@ jobs:
       if: matrix.cloud == 'microk8s'
       uses: balchua/microk8s-actions@v0.4.2
       with:
-        channel: "1.25-strict/stable"
+        channel: "1.35-strict/stable"
         addons: '["dns", "hostpath-storage"]'
 
     - name: Install Juju
@@ -188,6 +188,7 @@ jobs:
       run: |
         sg snap_microk8s <<EOF
           juju bootstrap microk8s c \
+            --config agent-stream=proposed \
             --controller-charm-channel=${{ needs.channel.outputs.test }}
         EOF
 
@@ -215,7 +216,11 @@ jobs:
       run: |
         set -x
         set +e
-        juju status
+        juju status -m controller
         juju debug-log -m controller --replay
+        sg snap_microk8s <<EOF
+          microk8s.kubectl -n controller-c get all
+          microk8s.kubectl -n controller-c get -o yaml pod/controller-0
+        EOF
 
     # TODO: test integration with dashboard / ha-proxy
