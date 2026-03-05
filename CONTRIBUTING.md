@@ -72,15 +72,15 @@ $ charmcraft upload *.charm --name juju-controller
 Revision [XX] of 'juju-controller' created
 ```
 
-Finally, release it to the relevant channels. Along with a `latest` track, we maintain a track for every minor version of Juju, e.g. `3.0`, `3.1`, etc.
+Finally, release it to the relevant channels. Along with a `latest` track, we maintain a track for every minor version of Juju, e.g. `3.6`, `4.0`, etc.
 ```console
-$ charmcraft release juju-controller --revision [XX] --channel latest/stable --channel 3.0/stable
-Revision [XX] of charm 'juju-controller' released to latest/stable, 3.0/stable
+$ charmcraft release juju-controller --revision [XX] --channel latest/stable --channel 3.6/stable
+Revision [XX] of charm 'juju-controller' released to latest/stable, 3.6/stable
 ```
 
 You can also do the upload and release in a single step if you'd like:
 ```console
-$ charmcraft upload *.charm --name juju-controller --release latest/stable --release 3.0/stable
+$ charmcraft upload *.charm --name juju-controller --release latest/stable --release 3.6/stable
 Revision [XX] of 'juju-controller' created
-Revision [XX] of charm 'juju-controller' released to latest/stable, 3.0/stable
+Revision [XX] of charm 'juju-controller' released to latest/stable, 3.6/stable
 ```
