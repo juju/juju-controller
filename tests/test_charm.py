@@ -156,17 +156,30 @@ class TestCharm(unittest.TestCase):
     def test_apiaddresses_ipv6(self, _):
         self.assertEqual(self.harness.charm.api_port(), 17070)
 
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.replace")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_changed_single_addr(
-            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, mock_open,
+            mock_replace, mock_named_tempfile):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
         # This unit's agent ID happens to correspond with the unit ID.
         mock_get_agent_id.return_value = '0'
+
+        temp_file_path = '/var/lib/juju/agents/controller-0/tmp.conf'
+        temp_files = []
+
+        def fake_tempfile(*_, **__):
+            tmp_file = FakeNamedTemporaryFile(temp_file_path)
+            temp_files.append(tmp_file)
+            return tmp_file
+
+        mock_named_tempfile.side_effect = fake_tempfile
 
         harness.set_leader()
 
@@ -191,18 +204,46 @@ class TestCharm(unittest.TestCase):
         exp = {'0': '192.168.1.17', '9': '192.168.1.100'}
         self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
 
+        expected_conf = yaml.safe_load(agent_conf)
+        expected_conf['db-bind-addresses'] = exp
+        self.assertGreaterEqual(mock_named_tempfile.call_count, 1)
+        last_call_args, last_call_kwargs = mock_named_tempfile.call_args
+        self.assertEqual(last_call_args, ('w',))
+        self.assertEqual(last_call_kwargs, {
+            'dir': '/var/lib/juju/agents/controller-0', 'delete': False})
+
+        self.assertGreaterEqual(len(temp_files), 1)
+        self.assertEqual(yaml.safe_load(temp_files[-1].written), expected_conf)
+        last_replace_args, last_replace_kwargs = mock_replace.call_args
+        self.assertEqual(
+            last_replace_args,
+            (temp_file_path, '/var/lib/juju/agents/controller-0/controller.conf'))
+        self.assertEqual(last_replace_kwargs, {})
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.replace")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_changed_multi_addr_error(
-            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *_):
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, mock_open,
+            mock_replace, mock_named_tempfile):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(["192.168.1.17", "192.168.1.18"])
         mock_get_agent_id.return_value = '0'
+
+        temp_file_path = '/var/lib/juju/agents/controller-0/tmp.conf'
+        temp_files = []
+
+        def fake_tempfile(*_, **__):
+            tmp_file = FakeNamedTemporaryFile(temp_file_path)
+            temp_files.append(tmp_file)
+            return tmp_file
+
+        mock_named_tempfile.side_effect = fake_tempfile
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -212,19 +253,45 @@ class TestCharm(unittest.TestCase):
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        expected_conf = yaml.safe_load(agent_conf)
+        expected_conf['db-bind-addresses'] = {}
+        self.assertGreaterEqual(mock_named_tempfile.call_count, 1)
+        last_call_args, last_call_kwargs = mock_named_tempfile.call_args
+        self.assertEqual(last_call_args, ('w',))
+        self.assertEqual(last_call_kwargs, {
+            'dir': '/var/lib/juju/agents/controller-0', 'delete': False})
+        self.assertGreaterEqual(len(temp_files), 1)
+        self.assertEqual(yaml.safe_load(temp_files[-1].written), expected_conf)
+        last_replace_args, last_replace_kwargs = mock_replace.call_args
+        self.assertEqual(
+            last_replace_args,
+            (temp_file_path, '/var/lib/juju/agents/controller-0/controller.conf'))
+        self.assertEqual(last_replace_kwargs, {})
         mock_reload_config.assert_called_once()
 
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.replace")
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
-    @patch("builtins.open", new_callable=mock_open)
+    @patch("builtins.open", new_callable=mock_open, read_data="")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_changed_write_file(
-            self, mock_reload_config, mock_get_binding, mock_open, mock_get_agent_id):
+            self, mock_reload_config, mock_get_binding, mock_open, mock_get_agent_id,
+            mock_replace, mock_named_tempfile):
 
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
-
         mock_get_agent_id.return_value = '0'
+
+        temp_file_path = '/var/lib/juju/agents/controller-0/tmp.conf'
+        temp_files = []
+
+        def fake_tempfile(*_, **__):
+            tmp_file = FakeNamedTemporaryFile(temp_file_path)
+            temp_files.append(tmp_file)
+            return tmp_file
+
+        mock_named_tempfile.side_effect = fake_tempfile
 
         relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
         harness.add_relation_unit(relation_id, 'juju-controller/1')
@@ -233,38 +300,51 @@ class TestCharm(unittest.TestCase):
             relation_id, harness.charm.app.name, {'db-bind-addresses': json.dumps(bound)})
 
         file_path = '/var/lib/juju/agents/controller-0/controller.conf'
-        self.assertEqual(mock_open.call_count, 2)
+        self.assertEqual(mock_open.call_count, 1)
 
         # First call to read out the YAML
         first_open_args, _ = mock_open.call_args_list[0]
         self.assertEqual(first_open_args, (file_path,))
 
-        # Second call to write the updated YAML.
-        second_open_args, _ = mock_open.call_args_list[1]
-        self.assertEqual(second_open_args, (file_path, 'w'))
+        expected_conf = {'db-bind-addresses': bound}
+        self.assertGreaterEqual(mock_named_tempfile.call_count, 1)
+        last_call_args, last_call_kwargs = mock_named_tempfile.call_args
+        self.assertEqual(last_call_args, ('w',))
+        self.assertEqual(last_call_kwargs, {
+            'dir': '/var/lib/juju/agents/controller-0', 'delete': False})
+        self.assertGreaterEqual(len(temp_files), 1)
+        self.assertEqual(yaml.safe_load(temp_files[-1].written), expected_conf)
+        last_replace_args, last_replace_kwargs = mock_replace.call_args
+        self.assertEqual(last_replace_args, (temp_file_path, file_path))
+        self.assertEqual(last_replace_kwargs, {})
 
-        # yaml.dump appears to write the the file incrementally,
-        # so we need to hoover up the call args to reconstruct.
-        written = ''
-        for args in mock_open().write.call_args_list:
-            written += args[0][0]
-
-        self.assertEqual(yaml.safe_load(written), {'db-bind-addresses': bound})
-
-        # The last thing we should have done is send a reload request via the socket..
+        # The last thing we should have done is send a reload request via the socket.
         mock_reload_config.assert_called_once()
 
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.replace")
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
     def test_dbcluster_relation_departed(
-            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, mock_open,
+            mock_replace, mock_named_tempfile):
         harness = self.harness
         mock_get_binding.return_value = mockBinding(['192.168.1.17'])
 
         # This unit's agent ID happens to correspond with the unit ID.
         mock_get_agent_id.return_value = '0'
+
+        temp_file_path = '/var/lib/juju/agents/controller-0/tmp.conf'
+        temp_files = []
+
+        def fake_tempfile(*_, **__):
+            tmp_file = FakeNamedTemporaryFile(temp_file_path)
+            temp_files.append(tmp_file)
+            return tmp_file
+
+        mock_named_tempfile.side_effect = fake_tempfile
 
         harness.set_leader()
 
@@ -279,17 +359,33 @@ class TestCharm(unittest.TestCase):
 
         # Assert that the second units agent bind address is in the data bag.
         app_data = harness.get_relation_data(relation_id, 'juju-controller')
-        exp = {'0': '192.168.1.17', '9': '192.168.1.100'}
-        self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
+        initial_exp = {'0': '192.168.1.17', '9': '192.168.1.100'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), initial_exp)
 
         # Remove the second unit.
         harness.remove_relation_unit(relation_id, 'juju-controller/1')
 
         # Assert that the second unit's address is gone from the data bag.
         app_data = harness.get_relation_data(relation_id, 'juju-controller')
-        exp = {'0': '192.168.1.17'}
-        self.assertEqual(json.loads(app_data['db-bind-addresses']), exp)
+        final_exp = {'0': '192.168.1.17'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), final_exp)
 
+        initial_conf = yaml.safe_load(agent_conf)
+        initial_conf['db-bind-addresses'] = initial_exp
+        final_conf = yaml.safe_load(agent_conf)
+        final_conf['db-bind-addresses'] = final_exp
+
+        self.assertGreaterEqual(mock_named_tempfile.call_count, 2)
+        self.assertGreaterEqual(len(temp_files), 2)
+        self.assertEqual(yaml.safe_load(temp_files[0].written), initial_conf)
+        self.assertEqual(yaml.safe_load(temp_files[-1].written), final_conf)
+
+        self.assertEqual(mock_replace.call_count, len(temp_files))
+        last_replace_args, last_replace_kwargs = mock_replace.call_args
+        self.assertEqual(
+            last_replace_args,
+            (temp_file_path, '/var/lib/juju/agents/controller-0/controller.conf'))
+        self.assertEqual(last_replace_kwargs, {})
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
@@ -303,3 +399,18 @@ class mockNetwork:
 class mockBinding:
     def __init__(self, addresses):
         self.network = mockNetwork(addresses)
+
+
+class FakeNamedTemporaryFile:
+    def __init__(self, name):
+        self.name = name
+        self.written = ''
+
+    def write(self, data):
+        self.written += data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
