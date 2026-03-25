@@ -13,9 +13,9 @@ import yaml
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
-from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
+from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent, UpgradeCharmEvent, UpdateStatusEvent
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, Relation
+from ops.model import ActiveStatus, BlockedStatus, ModelError, Relation
 from pathlib import Path
 from typing import List
 
@@ -28,6 +28,7 @@ class JujuControllerCharm(CharmBase):
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
     AGENT_ID_KEY = 'agent-id'
+    SSH_PORT = 17022
 
     _stored = StoredState()
 
@@ -38,6 +39,7 @@ class JujuControllerCharm(CharmBase):
 
         self._stored.set_default(
             last_bind_addresses=[],
+            ports_opened=False,
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -50,6 +52,9 @@ class JujuControllerCharm(CharmBase):
     def _observe(self):
         """Set up all framework event observers."""
         self.framework.observe(self.on.install, self._on_install)
+        self.framework.observe(self.on.start, self._on_start)
+        self.framework.observe(self.on.update_status, self._on_update_status)
+        self.framework.observe(self.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(
@@ -71,8 +76,33 @@ class JujuControllerCharm(CharmBase):
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
         open(file_path, 'w+').close()
 
+    def _on_upgrade_charm(self, event: UpgradeCharmEvent):
+        """Ensure ports are re-opened after a charm upgrade."""
+        self._stored.ports_opened = False
+
+    def _open_controller_ports(self) -> bool:
+        """Open controller ports and report success."""
+        try:
+            self.unit.open_port("tcp", self.api_port())
+        except (AgentConfException, ModelError) as e:
+            logger.error('cannot open controller API port: %s', e)
+            return False
+        try:
+            self.unit.open_port("tcp", self.SSH_PORT)
+        except ModelError as e:
+            logger.error('cannot open controller SSH proxy port: %s', e)
+            return False
+
+        return True
+
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
+
+    def _on_update_status(self, _: UpdateStatusEvent):
+        if self._stored.ports_opened:
+            return
+        if self._open_controller_ports():
+            self._stored.ports_opened = True
 
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:

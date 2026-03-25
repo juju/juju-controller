@@ -63,6 +63,43 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["is-juju"], 'True')
         self.assertEqual(data.get("identity-provider-url"), None)
 
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id",
+           return_value='0')
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("pathlib.Path.mkdir")
+    def test_install_does_not_open_ports(self, *_):
+        harness = self.harness
+        harness.charm.on.install.emit()
+        opened = [(p.protocol, p.port) for p in harness.model.unit.opened_ports()]
+        self.assertEqual(opened, [])
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_start_does_not_open_ports(self, *_):
+        harness = self.harness
+        harness.charm.on.start.emit()
+        opened = [(p.protocol, p.port) for p in harness.model.unit.opened_ports()]
+        self.assertEqual(opened, [])
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_update_status_opens_api_port(self, *_):
+        harness = self.harness
+        harness.charm.on.update_status.emit()
+        opened = [(p.protocol, p.port) for p in harness.model.unit.opened_ports()]
+        self.assertIn(('tcp', 17070), opened)
+        self.assertIn(('tcp', 17022), opened)
+
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id",
+           return_value='0')
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_upgrade_charm_reopens_ports_on_update_status(self, *_):
+        harness = self.harness
+        harness.charm.on.update_status.emit()
+        harness.charm.on.upgrade_charm.emit()
+        harness.charm.on.update_status.emit()
+        opened = [(p.protocol, p.port) for p in harness.model.unit.opened_ports()]
+        self.assertIn(('tcp', 17070), opened)
+        self.assertIn(('tcp', 17022), opened)
+
     @patch.dict(os.environ, {
         "JUJU_MACHINE_ID": "machine-0",
         "JUJU_UNIT_NAME": "controller/0"
