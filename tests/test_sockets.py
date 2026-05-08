@@ -145,6 +145,85 @@ class TestClass(unittest.TestCase):
             insecure_skip_verify=True,
         )
 
+    def test_set_loki_endpoint_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/loki-endpoint',
+            method='POST',
+            body=r'{"url": "http://loki:3100/loki/api/v1/push"}',
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"set loki endpoint"}'
+            )
+        )
+        control_socket.set_loki_endpoint(
+            {"url": "http://loki:3100/loki/api/v1/push"}
+        )
+
+    def test_set_loki_endpoint_fail(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/loki-endpoint',
+            method='POST',
+            body=r'{"url": "http://loki:3100/loki/api/v1/push"}',
+            error=urllib.error.HTTPError(
+                url='http://localhost/loki-endpoint',
+                code=500,
+                msg='',
+                hdrs=None,
+                fp=io.BytesIO(br'{"error":"internal error"}'),
+            )
+        )
+
+        with self.assertRaises(APIError) as cm:
+            control_socket.set_loki_endpoint(
+                {"url": "http://loki:3100/loki/api/v1/push"}
+            )
+        self.assertEqual(cm.exception.body, {'error': 'internal error'})
+        self.assertEqual(cm.exception.code, 500)
+        self.assertEqual(cm.exception.message, 'internal error')
+
+    def test_remove_loki_endpoint_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/loki-endpoint',
+            method='DELETE',
+            body=None,
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"removed loki endpoint"}'
+            )
+        )
+        control_socket.remove_loki_endpoint()
+
+    def test_remove_loki_endpoint_fail(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/loki-endpoint',
+            method='DELETE',
+            body=None,
+            error=urllib.error.HTTPError(
+                url='http://localhost/loki-endpoint',
+                code=404,
+                msg='',
+                hdrs=None,
+                fp=io.BytesIO(br'{"error":"loki endpoint not found"}'),
+            )
+        )
+
+        with self.assertRaises(APIError) as cm:
+            control_socket.remove_loki_endpoint()
+        self.assertEqual(cm.exception.body, {'error': 'loki endpoint not found'})
+        self.assertEqual(cm.exception.code, 404)
+        self.assertEqual(cm.exception.message, 'loki endpoint not found')
     def test_connection_error(self):
         mock_opener = MockOpener(self)
         control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)

@@ -1419,6 +1419,186 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertIn("failed to remove s3 credentials", harness.charm.unit.status.message)
 
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_joined(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        mock_set_loki_endpoint.assert_called_once_with(
+            {"url": "http://loki:3100/loki/api/v1/push"}
+        )
+        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_joined_non_leader_no_set(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(False)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        mock_set_loki_endpoint.assert_not_called()
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_joined_no_endpoints(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        # Don't set any endpoint data on the relation unit.
+        harness.update_relation_data(relation_id, "loki/0", {})
+
+        mock_set_loki_endpoint.assert_not_called()
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_joined_uses_first_endpoint(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.add_relation_unit(relation_id, "loki/1")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki-0:3100/loki/api/v1/push"})},
+        )
+        harness.update_relation_data(
+            relation_id,
+            "loki/1",
+            {"endpoint": json.dumps({"url": "http://loki-1:3100/loki/api/v1/push"})},
+        )
+
+        # Only one endpoint URL should be sent (the first from the deduplicated list).
+        last_call_args = mock_set_loki_endpoint.call_args[0][0]
+        self.assertIn(last_call_args["url"], [
+            "http://loki-0:3100/loki/api/v1/push",
+            "http://loki-1:3100/loki/api/v1/push",
+        ])
+
+    @patch(
+        "controlsocket.ControlSocketClient.set_loki_endpoint",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_loki_push_api_endpoint_joined_failure_sets_blocked(self, _mock_set):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn("failed to apply loki endpoint", harness.charm.unit.status.message)
+
+    @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_departed(self, _mock_set, mock_remove_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        harness.remove_relation(relation_id)
+        mock_remove_loki_endpoint.assert_called_once()
+
+    @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
+    def test_loki_push_api_endpoint_departed_non_leader(self, mock_remove_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(False)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.remove_relation(relation_id)
+        mock_remove_loki_endpoint.assert_not_called()
+
+    @patch(
+        "controlsocket.ControlSocketClient.remove_loki_endpoint",
+        side_effect=RuntimeError("boom"),
+    )
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_departed_failure_sets_blocked(
+        self, _mock_set, _mock_remove
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        harness.remove_relation(relation_id)
+
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn("failed to remove loki endpoint", harness.charm.unit.status.message)
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_updated(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        mock_set_loki_endpoint.assert_called_with(
+            {"url": "http://loki:3100/loki/api/v1/push"}
+        )
+
+        # Update the endpoint URL.
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki-new:3100/loki/api/v1/push"})},
+        )
+
+        mock_set_loki_endpoint.assert_called_with(
+            {"url": "http://loki-new:3100/loki/api/v1/push"}
+        )
+        self.assertEqual(mock_set_loki_endpoint.call_count, 2)
+
 
 class mockNetwork:
     def __init__(self, addresses):
