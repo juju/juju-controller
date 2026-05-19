@@ -84,6 +84,8 @@ class JujuControllerCharm(ops.CharmBase):
                 f"can't read controller API port from agent.conf: {e}")
             return
 
+        ca = self.ca_cert()
+
         metrics_endpoint = MetricsEndpointProvider(
             self,
             jobs=[{
@@ -99,7 +101,11 @@ class JujuControllerCharm(ops.CharmBase):
                     "password": password,
                 },
                 "tls_config": {
-                    "ca_file": self.ca_cert(),
+                    "ca": ca,
+                    # Note that this key, although incorrect, is retained for
+                    # backward compatibility. The operator for OpenTelemetry
+                    # uses the "ca" key, above.
+                    "ca_file": ca,
                     "server_name": "juju-apiserver",
                 },
             }],
