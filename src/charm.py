@@ -50,6 +50,9 @@ class JujuControllerCharm(CharmBase):
 
         self._stored.set_default(
             last_bind_addresses=[],
+            tracing_status_error=None,
+            s3_status_error=None,
+            s3_status_pending=False,
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -124,26 +127,47 @@ class JujuControllerCharm(CharmBase):
             "secret_key": secret_key,
             "endpoint": s3_connection_info.get("endpoint"),
         }
+        self._stored.s3_status_pending = True
 
         try:
             logger.info("reapplying S3 credentials after leadership change")
             self._control_socket.add_s3_credentials(credentials)
+            self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to reapply S3 credentials after leadership change: %s", exc)
-            self.unit.status = BlockedStatus("failed to reapply s3 credentials")
+            self._stored.s3_status_pending = False
+            self._stored.s3_status_error = "failed to reapply s3 credentials"
 
     def _on_collect_status(self, event: CollectStatusEvent):
+        has_blocking_status = False
         if len(self._stored.last_bind_addresses) > 1:
             event.add_status(BlockedStatus(
                 'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
+            has_blocking_status = True
 
         try:
             self.api_port()
         except AgentConfException as e:
             event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
+            has_blocking_status = True
 
-        event.add_status(ActiveStatus())
+        if self._stored.tracing_status_error:
+            event.add_status(BlockedStatus(self._stored.tracing_status_error))
+            has_blocking_status = True
+
+        if self._stored.s3_status_error:
+            event.add_status(BlockedStatus(self._stored.s3_status_error))
+            has_blocking_status = True
+
+        if self._stored.s3_status_pending:
+            if not has_blocking_status:
+                event.add_status(MaintenanceStatus("applying s3 credentials"))
+            self._stored.s3_status_pending = False
+            return
+
+        if not has_blocking_status:
+            event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
@@ -399,9 +423,10 @@ class JujuControllerCharm(CharmBase):
                 http_endpoint=http_endpoint,
                 ca_cert=ca_cert,
             )
+            self._stored.tracing_status_error = None
         except Exception as exc:
             logger.error("failed to set charm tracing config: %s", exc)
-            self.unit.status = BlockedStatus("failed to set charm tracing config")
+            self._stored.tracing_status_error = "failed to set charm tracing config"
 
     def _on_s3_credentials_changed(self, event: CredentialsChangedEvent):
         """Handle new or updated S3 credentials."""
@@ -417,13 +442,15 @@ class JujuControllerCharm(CharmBase):
         if not self.unit.is_leader():
             return
 
+        self._stored.s3_status_pending = True
         try:
             logger.info("applying new S3 credentials")
             self._control_socket.add_s3_credentials(credentials)
-            self.unit.status = MaintenanceStatus("applying s3 credentials")
+            self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to apply S3 credentials: %s", exc)
-            self.unit.status = BlockedStatus("failed to apply s3 credentials")
+            self._stored.s3_status_pending = False
+            self._stored.s3_status_error = "failed to apply s3 credentials"
 
     def _on_s3_credentials_gone(self, _event):
         """Handle removal of S3 credentials."""
@@ -432,9 +459,10 @@ class JujuControllerCharm(CharmBase):
 
         try:
             self._control_socket.remove_s3_credentials()
+            self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to remove S3 credentials: %s", exc)
-            self.unit.status = BlockedStatus("failed to remove s3 credentials")
+            self._stored.s3_status_error = "failed to remove s3 credentials"
 
 
 def metrics_username(relation: Relation) -> str:
