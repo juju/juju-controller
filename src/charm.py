@@ -18,7 +18,7 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
 from charms.data_platform_libs.v0.s3 import CredentialsChangedEvent, S3Requirer
 from ops.charm import CharmBase, CollectStatusEvent
 from ops.framework import StoredState
-from ops.charm import InstallEvent, RelationJoinedEvent, RelationDepartedEvent
+from ops.charm import InstallEvent, LeaderElectedEvent, RelationJoinedEvent, RelationDepartedEvent
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, Relation
 from pathlib import Path
@@ -69,6 +69,7 @@ class JujuControllerCharm(CharmBase):
         """Set up all framework event observers."""
         self.framework.observe(self.on.install, self._on_install)
         self.framework.observe(self.on.start, self._on_start)
+        self.framework.observe(self.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(
@@ -106,6 +107,33 @@ class JujuControllerCharm(CharmBase):
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
+
+    def _on_leader_elected(self, _event: LeaderElectedEvent):
+        if self._stored.tracing_endpoints or self._stored.ca_cert:
+            self._update_charm_tracing_config()
+
+        # Read current relation data rather than relying on locally cached
+        # state. This avoids replaying stale credentials if this unit becomes
+        # leader before processing delayed relation events.
+        s3_connection_info = self._s3.get_s3_connection_info()
+        access_key = s3_connection_info.get("access-key")
+        secret_key = s3_connection_info.get("secret-key")
+        if not access_key or not secret_key:
+            return
+
+        credentials = {
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "endpoint": s3_connection_info.get("endpoint"),
+        }
+        self._stored.s3_credentials = credentials
+
+        try:
+            logger.info("reapplying S3 credentials after leadership change")
+            self._control_socket.add_s3_credentials(credentials)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("failed to reapply S3 credentials after leadership change: %s", exc)
+            self.unit.status = BlockedStatus("failed to reapply s3 credentials")
 
     def _on_collect_status(self, event: CollectStatusEvent):
         if len(self._stored.last_bind_addresses) > 1:
@@ -372,31 +400,39 @@ class JujuControllerCharm(CharmBase):
 
     def _on_s3_credentials_changed(self, event: CredentialsChangedEvent):
         """Handle new or updated S3 credentials."""
-        if self.unit.is_leader():
-            credentials = {
-                'access_key': event.access_key,
-                'secret_key': event.secret_key,
-                'endpoint': event.endpoint,
-            }
-            self._stored.s3_credentials = credentials
+        # S3Requirer always negotiates a bucket, but right now each controller
+        # uses its own Juju-managed bucket. We only need auth and endpoint
+        # until we support shared or externally managed buckets.
+        credentials = {
+            'access_key': event.access_key,
+            'secret_key': event.secret_key,
+            'endpoint': event.endpoint,
+        }
+        self._stored.s3_credentials = credentials
 
-            try:
-                logger.info("applying new S3 credentials")
-                self._control_socket.add_s3_credentials(credentials)
-                self.unit.status = MaintenanceStatus("applying s3 credentials")
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error("failed to apply S3 credentials: %s", exc)
-                self.unit.status = BlockedStatus("failed to apply s3 credentials")
+        if not self.unit.is_leader():
+            return
+
+        try:
+            logger.info("applying new S3 credentials")
+            self._control_socket.add_s3_credentials(credentials)
+            self.unit.status = MaintenanceStatus("applying s3 credentials")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("failed to apply S3 credentials: %s", exc)
+            self.unit.status = BlockedStatus("failed to apply s3 credentials")
 
     def _on_s3_credentials_gone(self, _event):
         """Handle removal of S3 credentials."""
-        if self.unit.is_leader():
-            try:
-                self._control_socket.remove_s3_credentials()
-                self._stored.s3_credentials = dict()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error("failed to remove S3 credentials: %s", exc)
-                self.unit.status = BlockedStatus("failed to remove s3 credentials")
+        if not self.unit.is_leader():
+            self._stored.s3_credentials = dict()
+            return
+
+        try:
+            self._control_socket.remove_s3_credentials()
+            self._stored.s3_credentials = dict()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("failed to remove S3 credentials: %s", exc)
+            self.unit.status = BlockedStatus("failed to remove s3 credentials")
 
 
 def metrics_username(relation: Relation) -> str:

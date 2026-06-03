@@ -177,6 +177,34 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_relation_replayed_on_leader_elected(
+        self, mock_set_tracing_config, *_
+    ):
+        harness = self.harness
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id, "tempo-coordinator", tracing_provider_data()
+        )
+
+        self.assertEqual(
+            harness.charm._stored.tracing_endpoints,
+            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
+        )
+        mock_set_tracing_config.assert_not_called()
+
+        harness.set_leader(True)
+
+        mock_set_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_change_ignores_not_ready(
         self, mock_set_tracing_config, *_
     ):
@@ -561,8 +589,45 @@ class TestCharm(unittest.TestCase):
             {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
         )
 
-        self.assertEqual(harness.charm._stored.s3_credentials, {})
+        self.assertEqual(
+            harness.charm._stored.s3_credentials,
+            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
+        )
         mock_add_s3_credentials.assert_not_called()
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_replayed_on_leader_elected(self, mock_add_s3_credentials):
+        harness = self.harness
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {
+                "access-key": "ak",
+                "secret-key": "sk",
+                "bucket": "test-bucket",
+                "endpoint": "https://s3.example",
+            },
+        )
+        expected_credentials = {
+            "access_key": "ak",
+            "secret_key": "sk",
+            "endpoint": "https://s3.example",
+        }
+        self.assertEqual(harness.charm._stored.s3_credentials, expected_credentials)
+        mock_add_s3_credentials.assert_not_called()
+
+        harness.charm._stored.s3_credentials = {
+            "access_key": "stale-ak",
+            "secret_key": "stale-sk",
+            "endpoint": "https://stale-s3.example",
+        }
+        harness.set_leader(True)
+
+        mock_add_s3_credentials.assert_called_once_with(expected_credentials)
 
     @patch("controlsocket.ControlSocketClient.add_s3_credentials")
     def test_s3_relation_credentials_updated(self, mock_add_s3_credentials):
@@ -640,6 +705,10 @@ class TestCharm(unittest.TestCase):
             relation_id,
             "s3-integrator",
             {"access-key": "ak", "secret-key": "sk"},
+        )
+        self.assertEqual(
+            harness.charm._stored.s3_credentials,
+            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
         )
         harness.remove_relation(relation_id)
 
