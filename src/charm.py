@@ -50,7 +50,6 @@ class JujuControllerCharm(CharmBase):
 
         self._stored.set_default(
             last_bind_addresses=[],
-            s3_credentials=dict(),
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -125,7 +124,6 @@ class JujuControllerCharm(CharmBase):
             "secret_key": secret_key,
             "endpoint": s3_connection_info.get("endpoint"),
         }
-        self._stored.s3_credentials = credentials
 
         try:
             logger.info("reapplying S3 credentials after leadership change")
@@ -415,7 +413,6 @@ class JujuControllerCharm(CharmBase):
             'secret_key': event.secret_key,
             'endpoint': event.endpoint,
         }
-        self._stored.s3_credentials = credentials
 
         if not self.unit.is_leader():
             return
@@ -431,12 +428,10 @@ class JujuControllerCharm(CharmBase):
     def _on_s3_credentials_gone(self, _event):
         """Handle removal of S3 credentials."""
         if not self.unit.is_leader():
-            self._stored.s3_credentials = dict()
             return
 
         try:
             self._control_socket.remove_s3_credentials()
-            self._stored.s3_credentials = dict()
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to remove S3 credentials: %s", exc)
             self.unit.status = BlockedStatus("failed to remove s3 credentials")

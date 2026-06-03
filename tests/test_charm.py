@@ -528,10 +528,6 @@ class TestCharm(unittest.TestCase):
             "secret_key": "sk",
             "endpoint": "https://s3.example",
         }
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            expected_credentials,
-        )
         mock_add_s3_credentials.assert_called_once_with(expected_credentials)
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
 
@@ -552,10 +548,6 @@ class TestCharm(unittest.TestCase):
             {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
         )
 
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
-        )
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertIn(
             "failed to apply s3 credentials",
@@ -576,10 +568,6 @@ class TestCharm(unittest.TestCase):
             {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
         )
 
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
-        )
         mock_add_s3_credentials.assert_not_called()
 
     @patch("controlsocket.ControlSocketClient.add_s3_credentials")
@@ -604,14 +592,8 @@ class TestCharm(unittest.TestCase):
             "secret_key": "sk",
             "endpoint": "https://s3.example",
         }
-        self.assertEqual(harness.charm._stored.s3_credentials, expected_credentials)
         mock_add_s3_credentials.assert_not_called()
 
-        harness.charm._stored.s3_credentials = {
-            "access_key": "stale-ak",
-            "secret_key": "stale-sk",
-            "endpoint": "https://stale-s3.example",
-        }
         harness.set_leader(True)
 
         mock_add_s3_credentials.assert_called_once_with(expected_credentials)
@@ -629,19 +611,11 @@ class TestCharm(unittest.TestCase):
             "s3-integrator",
             {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
         )
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
-        )
 
         harness.update_relation_data(
             relation_id,
             "s3-integrator",
             {"access-key": "ak2", "secret-key": "sk2", "bucket": "test-bucket"},
-        )
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak2", "secret_key": "sk2", "endpoint": None},
         )
         mock_add_s3_credentials.assert_called_with(
             {"access_key": "ak2", "secret_key": "sk2", "endpoint": None}
@@ -658,11 +632,12 @@ class TestCharm(unittest.TestCase):
         # Bucket is auto-set by the S3Requirer when bucket_name is not provided.
         data = harness.get_relation_data(relation_id, harness.charm.app.name)
         self.assertEqual(data["bucket"], f"relation-{relation_id}")
-        self.assertEqual(harness.charm._stored.s3_credentials, {})
 
     @patch("controlsocket.ControlSocketClient.remove_s3_credentials")
     @patch("controlsocket.ControlSocketClient.add_s3_credentials")
-    def test_s3_relation_credentials_gone(self, *_):
+    def test_s3_relation_credentials_gone(
+        self, mock_add_s3_credentials, mock_remove_s3_credentials
+    ):
         harness = self.harness
         harness.set_leader(True)
 
@@ -674,11 +649,12 @@ class TestCharm(unittest.TestCase):
             "s3-integrator",
             {"access-key": "ak", "secret-key": "sk"},
         )
-        expected_credentials = {"access_key": "ak", "secret_key": "sk", "endpoint": None}
-        self.assertEqual(harness.charm._stored.s3_credentials, expected_credentials)
 
         harness.remove_relation(relation_id)
-        self.assertEqual(harness.charm._stored.s3_credentials, {})
+        mock_add_s3_credentials.assert_called_once_with(
+            {"access_key": "ak", "secret_key": "sk", "endpoint": None}
+        )
+        mock_remove_s3_credentials.assert_called_once_with()
 
     @patch("controlsocket.ControlSocketClient.remove_s3_credentials")
     def test_s3_relation_credentials_gone_non_leader(self, mock_remove_s3_credentials):
@@ -693,13 +669,8 @@ class TestCharm(unittest.TestCase):
             "s3-integrator",
             {"access-key": "ak", "secret-key": "sk"},
         )
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
-        )
         harness.remove_relation(relation_id)
 
-        self.assertEqual(harness.charm._stored.s3_credentials, {})
         mock_remove_s3_credentials.assert_not_called()
 
     @patch(
@@ -721,10 +692,6 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertEqual(
-            harness.charm._stored.s3_credentials,
-            {"access_key": "ak", "secret_key": "sk", "endpoint": None},
-        )
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertIn("failed to remove s3 credentials", harness.charm.unit.status.message)
 
