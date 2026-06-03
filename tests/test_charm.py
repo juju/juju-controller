@@ -165,10 +165,6 @@ class TestCharm(unittest.TestCase):
 
         harness.update_relation_data(relation_id, "tempo-coordinator", provider_data)
 
-        self.assertEqual(
-            harness.charm._stored.tracing_endpoints,
-            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
-        )
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
@@ -189,12 +185,13 @@ class TestCharm(unittest.TestCase):
             relation_id, "tempo-coordinator", tracing_provider_data()
         )
 
-        self.assertEqual(
-            harness.charm._stored.tracing_endpoints,
-            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
-        )
         mock_set_tracing_config.assert_not_called()
 
+        harness.charm._stored.tracing_endpoints = {
+            "otlp_grpc": "stale-grpc:4317",
+            "otlp_http": "http://stale-http:4318",
+        }
+        harness.charm._stored.ca_cert = "stale-ca-cert"
         harness.set_leader(True)
 
         mock_set_tracing_config.assert_called_once_with(
@@ -214,7 +211,6 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm.tracing_requirer, "is_ready", return_value=False):
             harness.charm._on_tracing_relation_changed(event)
 
-        self.assertEqual(harness.charm._stored.tracing_endpoints, {})
         mock_set_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -250,10 +246,6 @@ class TestCharm(unittest.TestCase):
         harness.update_relation_data(
             relation_id, "tempo-coordinator", tracing_provider_data()
         )
-        self.assertEqual(
-            harness.charm._stored.tracing_endpoints,
-            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
-        )
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
@@ -262,7 +254,6 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertEqual(harness.charm._stored.tracing_endpoints, {})
         self.assertEqual(mock_set_tracing_config.call_count, 2)
         mock_set_tracing_config.assert_called_with(
             grpc_endpoint=None,
@@ -272,7 +263,7 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_receive_ca_cert_updates_stored_ca_cert(self, mock_set_tracing_config, *_):
+    def test_receive_ca_cert_updates_tracing_config(self, mock_set_tracing_config, *_):
         harness = self.harness
         harness.set_leader(True)
 
@@ -287,7 +278,6 @@ class TestCharm(unittest.TestCase):
             certificate_provider_data({cert_b, cert_a}),
         )
 
-        self.assertEqual(harness.charm._stored.ca_cert, "\n".join([cert_a, cert_b]))
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
@@ -304,12 +294,11 @@ class TestCharm(unittest.TestCase):
         event = type("Event", (), {"certificates": set(), "relation_id": 1})()
         harness.charm._on_receive_ca_cert_updated(event)
 
-        self.assertIsNone(harness.charm._stored.ca_cert)
         mock_set_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_receive_ca_cert_removed_clears_stored_ca_cert(self, mock_set_tracing_config, *_):
+    def test_receive_ca_cert_removed_clears_tracing_ca_cert(self, mock_set_tracing_config, *_):
         harness = self.harness
         harness.set_leader(True)
 
@@ -322,7 +311,6 @@ class TestCharm(unittest.TestCase):
             "cert-provider",
             certificate_provider_data({cert}),
         )
-        self.assertEqual(harness.charm._stored.ca_cert, cert)
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
@@ -331,7 +319,6 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertIsNone(harness.charm._stored.ca_cert)
         self.assertEqual(mock_set_tracing_config.call_count, 2)
         mock_set_tracing_config.assert_called_with(
             grpc_endpoint=None,

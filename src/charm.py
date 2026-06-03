@@ -22,7 +22,7 @@ from ops.charm import InstallEvent, LeaderElectedEvent, RelationJoinedEvent, Rel
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, Relation
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,6 @@ class JujuControllerCharm(CharmBase):
 
         self._stored.set_default(
             last_bind_addresses=[],
-            tracing_endpoints={},
-            ca_cert=None,
             s3_credentials=dict(),
         )
 
@@ -109,7 +107,8 @@ class JujuControllerCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
     def _on_leader_elected(self, _event: LeaderElectedEvent):
-        if self._stored.tracing_endpoints or self._stored.ca_cert:
+        grpc_endpoint, http_endpoint, ca_cert = self._current_tracing_config()
+        if grpc_endpoint or http_endpoint or ca_cert:
             self._update_charm_tracing_config()
 
         # Read current relation data rather than relying on locally cached
@@ -235,15 +234,14 @@ class JujuControllerCharm(CharmBase):
         if not self.tracing_requirer.is_ready(event.relation):
             return
 
-        self._stored.tracing_endpoints = {
+        endpoints = {
             "otlp_grpc": self.tracing_requirer.get_endpoint("otlp_grpc", event.relation),
             "otlp_http": self.tracing_requirer.get_endpoint("otlp_http", event.relation),
         }
-        logger.info("tracing endpoints updated: %s", self._stored.tracing_endpoints)
+        logger.info("tracing endpoints updated: %s", endpoints)
         self._update_charm_tracing_config()
 
     def _on_tracing_relation_removed(self, event):
-        self._stored.tracing_endpoints = {}
         logger.info("tracing endpoints cleared")
         self._update_charm_tracing_config()
 
@@ -252,12 +250,10 @@ class JujuControllerCharm(CharmBase):
         if not ca_list:
             return
 
-        self._stored.ca_cert = '\n'.join(sorted(ca_list))
         logger.info("CA certificate updated from relation id %s", event.relation_id)
         self._update_charm_tracing_config()
 
     def _on_receive_ca_cert_removed(self, event):
-        self._stored.ca_cert = None
         logger.info("CA certificate removed from relation id %s", event.relation_id)
         self._update_charm_tracing_config()
 
@@ -375,24 +371,35 @@ class JujuControllerCharm(CharmBase):
         """Send a reload request to the config reload socket."""
         self._config_change_socket.reload_config()
 
+    def _current_tracing_config(
+        self,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        grpc_endpoint: Optional[str] = None
+        http_endpoint: Optional[str] = None
+
+        tracing_data = self.tracing_requirer.get_all_endpoints()
+        if tracing_data:
+            for receiver in tracing_data.receivers:
+                if receiver.protocol.name == "otlp_grpc" and grpc_endpoint is None:
+                    grpc_endpoint = receiver.url
+                if receiver.protocol.name == "otlp_http" and http_endpoint is None:
+                    http_endpoint = receiver.url
+
+        certificates = self._certificate_transfer.get_all_certificates()
+        ca_cert = "\n".join(sorted(certificates)) if certificates else None
+        return grpc_endpoint, http_endpoint, ca_cert
+
     def _update_charm_tracing_config(self):
         """Update charm configuration with current tracing endpoint and CA cert information."""
         if not self.unit.is_leader():
             return
 
+        grpc_endpoint, http_endpoint, ca_cert = self._current_tracing_config()
         try:
             self._control_socket.set_charm_tracing_config(
-                grpc_endpoint=(
-                    self._stored.tracing_endpoints["otlp_grpc"]
-                    if "otlp_grpc" in self._stored.tracing_endpoints
-                    else None
-                ),
-                http_endpoint=(
-                    self._stored.tracing_endpoints["otlp_http"]
-                    if "otlp_http" in self._stored.tracing_endpoints
-                    else None
-                ),
-                ca_cert=self._stored.ca_cert,
+                grpc_endpoint=grpc_endpoint,
+                http_endpoint=http_endpoint,
+                ca_cert=ca_cert,
             )
         except Exception as exc:
             logger.error("failed to set charm tracing config: %s", exc)
