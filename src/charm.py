@@ -65,6 +65,7 @@ class JujuControllerCharm(CharmBase):
             workload_tracing_status_error=None,
             s3_status_error=None,
             s3_status_pending=False,
+            loki_endpoint_applied=False,
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -172,6 +173,7 @@ class JujuControllerCharm(CharmBase):
     def _on_leader_elected(self, _event: LeaderElectedEvent):
         self._update_charm_tracing_config()
         self._update_workload_tracing_config()
+        self._reconcile_loki_endpoint()
 
         # Read current relation data rather than relying on locally cached
         # state. This avoids replaying stale credentials if this unit becomes
@@ -633,28 +635,44 @@ class JujuControllerCharm(CharmBase):
 
     def _on_loki_push_api_endpoint_joined(self, _event):
         """Handle new or updated Loki push API endpoint."""
-        if self.unit.is_leader():
-            endpoints = self._loki_consumer.loki_endpoints
-            if not endpoints:
-                return
-
-            endpoint = {"url": endpoints[0]["url"]}
-            try:
-                logger.info("applying Loki push API endpoint")
-                self._control_socket.set_loki_endpoint(endpoint)
-                self.unit.status = MaintenanceStatus("applying loki endpoint")
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error("failed to apply Loki endpoint: %s", exc)
-                self.unit.status = BlockedStatus("failed to apply loki endpoint")
+        self._reconcile_loki_endpoint(report_applying_status=True)
 
     def _on_loki_push_api_endpoint_departed(self, _event):
         """Handle removal of Loki push API endpoint."""
-        if self.unit.is_leader():
+        self._reconcile_loki_endpoint()
+
+    def _current_loki_endpoint(self) -> Optional[dict]:
+        endpoints = self._loki_consumer.loki_endpoints
+        if not endpoints:
+            return None
+        return {"url": endpoints[0]["url"]}
+
+    def _reconcile_loki_endpoint(self, report_applying_status: bool = False):
+        if not self.unit.is_leader():
+            return
+
+        endpoint = self._current_loki_endpoint()
+        if endpoint:
             try:
-                self._control_socket.remove_loki_endpoint()
+                logger.info("applying Loki push API endpoint")
+                self._control_socket.set_loki_endpoint(endpoint)
+                self._stored.loki_endpoint_applied = True
+                if report_applying_status:
+                    self.unit.status = MaintenanceStatus("applying loki endpoint")
             except Exception as exc:  # pragma: no cover - defensive
-                logger.error("failed to remove Loki endpoint: %s", exc)
-                self.unit.status = BlockedStatus("failed to remove loki endpoint")
+                logger.error("failed to apply Loki endpoint: %s", exc)
+                self.unit.status = BlockedStatus("failed to apply loki endpoint")
+            return
+
+        if not self._stored.loki_endpoint_applied:
+            return
+
+        try:
+            self._control_socket.remove_loki_endpoint()
+            self._stored.loki_endpoint_applied = False
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("failed to remove Loki endpoint: %s", exc)
+            self.unit.status = BlockedStatus("failed to remove loki endpoint")
 
 
 def metrics_username(relation: Relation) -> str:

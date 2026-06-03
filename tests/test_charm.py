@@ -1456,6 +1456,55 @@ class TestCharm(unittest.TestCase):
         mock_set_loki_endpoint.assert_not_called()
 
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_replayed_on_leader_elected(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(False)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        mock_set_loki_endpoint.assert_not_called()
+
+        harness.set_leader(True)
+        mock_set_loki_endpoint.assert_called_once_with(
+            {"url": "http://loki:3100/loki/api/v1/push"}
+        )
+
+    @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_cleared_on_leader_elected_without_relations(
+        self, mock_set_loki_endpoint, mock_remove_loki_endpoint
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+        mock_set_loki_endpoint.assert_called_once_with(
+            {"url": "http://loki:3100/loki/api/v1/push"}
+        )
+
+        harness.set_leader(False)
+        harness.remove_relation(relation_id)
+        mock_remove_loki_endpoint.assert_not_called()
+
+        mock_set_loki_endpoint.reset_mock()
+        harness.set_leader(True)
+
+        mock_set_loki_endpoint.assert_not_called()
+        mock_remove_loki_endpoint.assert_called_once_with()
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_loki_push_api_endpoint_joined_no_endpoints(self, mock_set_loki_endpoint):
         harness = self.harness
         harness.set_leader(True)
