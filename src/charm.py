@@ -109,9 +109,7 @@ class JujuControllerCharm(CharmBase):
         self.unit.status = ActiveStatus()
 
     def _on_leader_elected(self, _event: LeaderElectedEvent):
-        grpc_endpoint, http_endpoint, ca_cert = self._current_tracing_config()
-        if grpc_endpoint or http_endpoint or ca_cert:
-            self._update_charm_tracing_config()
+        self._update_charm_tracing_config()
 
         # Read current relation data rather than relying on locally cached
         # state. This avoids replaying stale credentials if this unit becomes
