@@ -18,7 +18,7 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     TransportProtocolType,
 )
 from charm import JujuControllerCharm, AgentConfException
-from ops.model import BlockedStatus, ActiveStatus
+from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
 from unixsocket import ConnectionError as SocketConnectionError
@@ -76,6 +76,13 @@ class TestCharm(unittest.TestCase):
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+
+    def test_start_sets_active_status(self):
+        harness = Harness(JujuControllerCharm)
+        self.addCleanup(harness.cleanup)
+        harness.begin()
+        harness.charm.on.start.emit()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     def test_dashboard_relation_joined(self):
         harness = self.harness
@@ -149,6 +156,8 @@ class TestCharm(unittest.TestCase):
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_updates_endpoints(self, mock_set_tracing_config, *_):
         harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
 
         relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
         harness.add_relation_unit(relation_id, "tempo-coordinator/0")
@@ -157,10 +166,45 @@ class TestCharm(unittest.TestCase):
 
         harness.update_relation_data(relation_id, "tempo-coordinator", provider_data)
 
-        self.assertEqual(
-            harness.charm._stored.tracing_endpoints,
-            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
+        mock_set_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
         )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_relation_cleared_on_leader_elected_without_relations(
+        self, mock_set_tracing_config, *_
+    ):
+        harness = self.harness
+
+        harness.set_leader(True)
+
+        mock_set_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_relation_replayed_on_leader_elected(
+        self, mock_set_tracing_config, *_
+    ):
+        harness = self.harness
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id, "tempo-coordinator", tracing_provider_data()
+        )
+
+        mock_set_tracing_config.assert_not_called()
+
+        harness.set_leader(True)
+
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
@@ -178,31 +222,17 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm.tracing_requirer, "is_ready", return_value=False):
             harness.charm._on_tracing_relation_changed(event)
 
-        self.assertEqual(harness.charm._stored.tracing_endpoints, {})
         mock_set_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    @patch(
-        "controlsocket.ControlSocketClient.set_charm_tracing_config",
-        side_effect=SocketConnectionError("could not connect to socket"),
-    )
-    def test_tracing_relation_update_propagates_socket_error(self, *_):
-        harness = self.harness
-
-        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
-        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
-
-        with self.assertRaisesRegex(
-            SocketConnectionError, "could not connect to socket"
-        ):
-            harness.update_relation_data(
-                relation_id, "tempo-coordinator", tracing_provider_data()
-            )
-
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_tracing_relation_removed_clears_endpoints(self, mock_set_tracing_config, *_):
+    def test_tracing_relation_update_sets_blocked_on_socket_error(
+        self, mock_set_tracing_config, *_
+    ):
         harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
+        mock_set_tracing_config.side_effect = SocketConnectionError("could not connect to socket")
 
         relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
         harness.add_relation_unit(relation_id, "tempo-coordinator/0")
@@ -210,9 +240,55 @@ class TestCharm(unittest.TestCase):
         harness.update_relation_data(
             relation_id, "tempo-coordinator", tracing_provider_data()
         )
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertEqual(
-            harness.charm._stored.tracing_endpoints,
-            {"otlp_grpc": "tempo-grpc:4317", "otlp_http": "http://tempo-http:4318"},
+            harness.charm.unit.status.message, "failed to set charm tracing config"
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_status_error_clears_after_success(self, mock_set_tracing_config, *_):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        mock_set_tracing_config.side_effect = [
+            SocketConnectionError("could not connect to socket"),
+            None,
+        ]
+        harness.update_relation_data(
+            relation_id, "tempo-coordinator", tracing_provider_data()
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertEqual(
+            harness.charm.unit.status.message, "failed to set charm tracing config"
+        )
+
+        harness.remove_relation(relation_id)
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_relation_removed_clears_endpoints(self, mock_set_tracing_config, *_):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id, "tempo-coordinator", tracing_provider_data()
         )
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint="tempo-grpc:4317",
@@ -222,7 +298,6 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertEqual(harness.charm._stored.tracing_endpoints, {})
         self.assertEqual(mock_set_tracing_config.call_count, 2)
         mock_set_tracing_config.assert_called_with(
             grpc_endpoint=None,
@@ -232,8 +307,10 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_receive_ca_cert_updates_stored_ca_cert(self, mock_set_tracing_config, *_):
+    def test_receive_ca_cert_updates_tracing_config(self, mock_set_tracing_config, *_):
         harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
 
         relation_id = harness.add_relation("charm-tracing-ca-cert", "cert-provider")
         harness.add_relation_unit(relation_id, "cert-provider/0")
@@ -246,7 +323,6 @@ class TestCharm(unittest.TestCase):
             certificate_provider_data({cert_b, cert_a}),
         )
 
-        self.assertEqual(harness.charm._stored.ca_cert, "\n".join([cert_a, cert_b]))
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
@@ -263,13 +339,14 @@ class TestCharm(unittest.TestCase):
         event = type("Event", (), {"certificates": set(), "relation_id": 1})()
         harness.charm._on_receive_ca_cert_updated(event)
 
-        self.assertIsNone(harness.charm._stored.ca_cert)
         mock_set_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_receive_ca_cert_removed_clears_stored_ca_cert(self, mock_set_tracing_config, *_):
+    def test_receive_ca_cert_removed_clears_tracing_ca_cert(self, mock_set_tracing_config, *_):
         harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
 
         relation_id = harness.add_relation("charm-tracing-ca-cert", "cert-provider")
         harness.add_relation_unit(relation_id, "cert-provider/0")
@@ -280,7 +357,6 @@ class TestCharm(unittest.TestCase):
             "cert-provider",
             certificate_provider_data({cert}),
         )
-        self.assertEqual(harness.charm._stored.ca_cert, cert)
         mock_set_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
@@ -289,7 +365,6 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertIsNone(harness.charm._stored.ca_cert)
         self.assertEqual(mock_set_tracing_config.call_count, 2)
         mock_set_tracing_config.assert_called_with(
             grpc_endpoint=None,
@@ -350,6 +425,7 @@ class TestCharm(unittest.TestCase):
         mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
+        harness.charm._stored.tracing_status_error = None
 
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
@@ -449,6 +525,7 @@ class TestCharm(unittest.TestCase):
         mock_get_agent_id.return_value = '0'
 
         harness.set_leader()
+        harness.charm._stored.tracing_status_error = None
 
         # Have another unit enter the relation.
         relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
@@ -474,6 +551,257 @@ class TestCharm(unittest.TestCase):
 
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_changed(self, mock_add_s3_credentials):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {
+                "access-key": "ak",
+                "secret-key": "sk",
+                "bucket": "test-bucket",
+                "endpoint": "https://s3.example",
+            },
+        )
+
+        expected_credentials = {
+            "access_key": "ak",
+            "secret_key": "sk",
+            "endpoint": "https://s3.example",
+        }
+        mock_add_s3_credentials.assert_called_once_with(expected_credentials)
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_status_pending_clears_after_collect(self, mock_add_s3_credentials):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+        mock_add_s3_credentials.assert_called_once_with(
+            {"access_key": "ak", "secret_key": "sk", "endpoint": None}
+        )
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch(
+        "controlsocket.ControlSocketClient.add_s3_credentials",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_s3_relation_credentials_changed_failure_sets_blocked(self, _mock_add):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn(
+            "failed to apply s3 credentials",
+            harness.charm.unit.status.message,
+        )
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_changed_non_leader_no_set(self, mock_add_s3_credentials):
+        harness = self.harness
+        harness.set_leader(False)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+
+        mock_add_s3_credentials.assert_not_called()
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_replayed_on_leader_elected(self, mock_add_s3_credentials):
+        harness = self.harness
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {
+                "access-key": "ak",
+                "secret-key": "sk",
+                "bucket": "test-bucket",
+                "endpoint": "https://s3.example",
+            },
+        )
+        expected_credentials = {
+            "access_key": "ak",
+            "secret_key": "sk",
+            "endpoint": "https://s3.example",
+        }
+        mock_add_s3_credentials.assert_not_called()
+
+        harness.set_leader(True)
+
+        mock_add_s3_credentials.assert_called_once_with(expected_credentials)
+
+    @patch(
+        "controlsocket.ControlSocketClient.add_s3_credentials",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_s3_relation_replay_failure_sets_blocked_status(self, _mock_add):
+        harness = self.harness
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn("failed to reapply s3 credentials", harness.charm.unit.status.message)
+
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_updated(self, mock_add_s3_credentials):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak2", "secret-key": "sk2", "bucket": "test-bucket"},
+        )
+        mock_add_s3_credentials.assert_called_with(
+            {"access_key": "ak2", "secret_key": "sk2", "endpoint": None}
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+
+    def test_s3_relation_sets_bucket_on_join(self):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        # Bucket is auto-set by the S3Requirer when bucket_name is not provided.
+        data = harness.get_relation_data(relation_id, harness.charm.app.name)
+        self.assertEqual(data["bucket"], f"relation-{relation_id}")
+
+    @patch("controlsocket.ControlSocketClient.remove_s3_credentials")
+    @patch("controlsocket.ControlSocketClient.add_s3_credentials")
+    def test_s3_relation_credentials_gone(
+        self, mock_add_s3_credentials, mock_remove_s3_credentials
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk"},
+        )
+
+        harness.remove_relation(relation_id)
+        mock_add_s3_credentials.assert_called_once_with(
+            {"access_key": "ak", "secret_key": "sk", "endpoint": None}
+        )
+        mock_remove_s3_credentials.assert_called_once_with()
+
+    @patch("controlsocket.ControlSocketClient.remove_s3_credentials")
+    def test_s3_relation_credentials_gone_non_leader(self, mock_remove_s3_credentials):
+        harness = self.harness
+        harness.set_leader(False)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk"},
+        )
+        harness.remove_relation(relation_id)
+
+        mock_remove_s3_credentials.assert_not_called()
+
+    @patch(
+        "controlsocket.ControlSocketClient.remove_s3_credentials",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_s3_relation_credentials_gone_failure_sets_blocked(self, _mock_remove):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.tracing_status_error = None
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk"},
+        )
+
+        harness.remove_relation(relation_id)
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn("failed to remove s3 credentials", harness.charm.unit.status.message)
 
 
 class mockNetwork:

@@ -26,6 +26,10 @@ requires:
     interface: certificate_transfer
     limit: 1
     optional: true
+  s3-backend:
+    interface: s3
+    limit: 1
+    optional: true
 
 peers:
   dbcluster:
@@ -56,3 +60,5 @@ charm-libs:
     version: "0"
   - lib: certificate_transfer_interface.certificate_transfer
     version: "1"
+  - lib: data_platform_libs.s3
+    version: "0"
