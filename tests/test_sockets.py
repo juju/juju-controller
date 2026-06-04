@@ -113,6 +113,30 @@ class TestClass(unittest.TestCase):
             ca_cert='-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
         )
 
+    def test_set_workload_tracing_config_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/workload-tracing-config',
+            method='POST',
+            body=(
+                r'{"grpc_endpoint": "grpc://trace.example.com:4317", '
+                r'"http_endpoint": "http://trace.example.com:4318", '
+                r'"ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----"}'
+            ),
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"updated workload tracing config"}'
+            )
+        )
+
+        control_socket.set_workload_tracing_config(
+            grpc_endpoint='grpc://trace.example.com:4317',
+            http_endpoint='http://trace.example.com:4318',
+            ca_cert='-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
+        )
+
     def test_connection_error(self):
         mock_opener = MockOpener(self)
         control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)

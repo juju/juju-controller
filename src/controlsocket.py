@@ -52,6 +52,25 @@ class ControlSocketClient(unixsocket.SocketClient):
         )
         logger.debug('result of set_charm_tracing_config request: %r', resp)
 
+    def set_workload_tracing_config(
+        self,
+        grpc_endpoint: Optional[str],
+        http_endpoint: Optional[str],
+        ca_cert: Optional[str],
+    ):
+        """Set the tracing configuration for the controller workload."""
+        body = {
+            "grpc_endpoint": grpc_endpoint,
+            "http_endpoint": http_endpoint,
+            "ca_cert": ca_cert,
+        }
+        resp = self.json_request(
+            method='POST',
+            path='/workload-tracing-config',
+            body=body,
+        )
+        logger.debug('result of set_workload_tracing_config request: %r', resp)
+
     def add_s3_credentials(self, credentials: dict):
         resp = self.json_request(
             method='POST',

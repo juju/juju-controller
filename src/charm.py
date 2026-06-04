@@ -39,18 +39,27 @@ class JujuControllerCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
 
-        self.tracing_requirer = TracingEndpointRequirer(
+        self.charm_tracing_requirer = TracingEndpointRequirer(
             self,
             protocols=["otlp_http", "otlp_grpc"],
             relation_name='charm-tracing'
         )
-        self._certificate_transfer = CertificateTransferRequires(
+        self.charm_certificate_transfer = CertificateTransferRequires(
             self, relationship_name='charm-tracing-ca-cert'
+        )
+        self.workload_tracing_requirer = TracingEndpointRequirer(
+            self,
+            protocols=["otlp_http", "otlp_grpc"],
+            relation_name='workload-tracing'
+        )
+        self.workload_certificate_transfer = CertificateTransferRequires(
+            self, relationship_name='workload-tracing-ca-cert'
         )
 
         self._stored.set_default(
             last_bind_addresses=[],
             tracing_status_error=None,
+            workload_tracing_status_error=None,
             s3_status_error=None,
             s3_status_pending=False,
         )
@@ -85,15 +94,33 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.dbcluster_relation_departed, self._on_dbcluster_relation_departed)
         self.framework.observe(
-            self.tracing_requirer.on.endpoint_changed, self._on_tracing_relation_changed)
+            self.charm_tracing_requirer.on.endpoint_changed, self._on_tracing_relation_changed)
         self.framework.observe(
-            self.tracing_requirer.on.endpoint_removed, self._on_tracing_relation_removed)
+            self.charm_tracing_requirer.on.endpoint_removed, self._on_tracing_relation_removed)
         self.framework.observe(
-            self._certificate_transfer.on.certificate_set_updated,
+            self.charm_certificate_transfer.on.certificate_set_updated,
             self._on_receive_ca_cert_updated,
         )
         self.framework.observe(
-            self._certificate_transfer.on.certificates_removed, self._on_receive_ca_cert_removed)
+            self.charm_certificate_transfer.on.certificates_removed,
+            self._on_receive_ca_cert_removed,
+        )
+        self.framework.observe(
+            self.workload_tracing_requirer.on.endpoint_changed,
+            self._on_workload_tracing_relation_changed,
+        )
+        self.framework.observe(
+            self.workload_tracing_requirer.on.endpoint_removed,
+            self._on_workload_tracing_relation_removed,
+        )
+        self.framework.observe(
+            self.workload_certificate_transfer.on.certificate_set_updated,
+            self._on_receive_workload_ca_cert_updated,
+        )
+        self.framework.observe(
+            self.workload_certificate_transfer.on.certificates_removed,
+            self._on_receive_workload_ca_cert_removed,
+        )
         self.framework.observe(
             self._s3.on.credentials_changed, self._on_s3_credentials_changed)
         self.framework.observe(
@@ -110,6 +137,7 @@ class JujuControllerCharm(CharmBase):
 
     def _on_leader_elected(self, _event: LeaderElectedEvent):
         self._update_charm_tracing_config()
+        self._update_workload_tracing_config()
 
         # Read current relation data rather than relying on locally cached
         # state. This avoids replaying stale credentials if this unit becomes
@@ -152,6 +180,10 @@ class JujuControllerCharm(CharmBase):
 
         if self._stored.tracing_status_error:
             event.add_status(BlockedStatus(self._stored.tracing_status_error))
+            has_blocking_status = True
+
+        if self._stored.workload_tracing_status_error:
+            event.add_status(BlockedStatus(self._stored.workload_tracing_status_error))
             has_blocking_status = True
 
         if self._stored.s3_status_error:
@@ -251,12 +283,12 @@ class JujuControllerCharm(CharmBase):
         self._update_bind_addresses(relation)
 
     def _on_tracing_relation_changed(self, event):
-        if not self.tracing_requirer.is_ready(event.relation):
+        if not self.charm_tracing_requirer.is_ready(event.relation):
             return
 
         endpoints = {
-            "otlp_grpc": self.tracing_requirer.get_endpoint("otlp_grpc", event.relation),
-            "otlp_http": self.tracing_requirer.get_endpoint("otlp_http", event.relation),
+            "otlp_grpc": self.charm_tracing_requirer.get_endpoint("otlp_grpc", event.relation),
+            "otlp_http": self.charm_tracing_requirer.get_endpoint("otlp_http", event.relation),
         }
         logger.info("tracing endpoints updated: %s", endpoints)
         self._update_charm_tracing_config()
@@ -276,6 +308,37 @@ class JujuControllerCharm(CharmBase):
     def _on_receive_ca_cert_removed(self, event):
         logger.info("CA certificate removed from relation id %s", event.relation_id)
         self._update_charm_tracing_config()
+
+    def _on_workload_tracing_relation_changed(self, event):
+        if not self.workload_tracing_requirer.is_ready(event.relation):
+            return
+
+        endpoints = {
+            "otlp_grpc": self.workload_tracing_requirer.get_endpoint(
+                "otlp_grpc", event.relation
+            ),
+            "otlp_http": self.workload_tracing_requirer.get_endpoint(
+                "otlp_http", event.relation
+            ),
+        }
+        logger.info("workload tracing endpoints updated: %s", endpoints)
+        self._update_workload_tracing_config()
+
+    def _on_workload_tracing_relation_removed(self, event):
+        logger.info("workload tracing endpoints cleared")
+        self._update_workload_tracing_config()
+
+    def _on_receive_workload_ca_cert_updated(self, event):
+        ca_list = event.certificates
+        if not ca_list:
+            return
+
+        logger.info("workload CA certificate updated from relation id %s", event.relation_id)
+        self._update_workload_tracing_config()
+
+    def _on_receive_workload_ca_cert_removed(self, event):
+        logger.info("workload CA certificate removed from relation id %s", event.relation_id)
+        self._update_workload_tracing_config()
 
     def _update_bind_addresses(self, relation):
         """Maintain our own bind address in relation data.
@@ -393,11 +456,13 @@ class JujuControllerCharm(CharmBase):
 
     def _current_tracing_config(
         self,
+        tracing_requirer: TracingEndpointRequirer,
+        certificate_transfer: CertificateTransferRequires,
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         grpc_endpoint: Optional[str] = None
         http_endpoint: Optional[str] = None
 
-        tracing_data = self.tracing_requirer.get_all_endpoints()
+        tracing_data = tracing_requirer.get_all_endpoints()
         if tracing_data:
             for receiver in tracing_data.receivers:
                 if receiver.protocol.name == "otlp_grpc" and grpc_endpoint is None:
@@ -405,16 +470,30 @@ class JujuControllerCharm(CharmBase):
                 if receiver.protocol.name == "otlp_http" and http_endpoint is None:
                     http_endpoint = receiver.url
 
-        certificates = self._certificate_transfer.get_all_certificates()
+        certificates = certificate_transfer.get_all_certificates()
         ca_cert = "\n".join(sorted(certificates)) if certificates else None
         return grpc_endpoint, http_endpoint, ca_cert
+
+    def _current_charm_tracing_config(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        return self._current_tracing_config(
+            tracing_requirer=self.charm_tracing_requirer,
+            certificate_transfer=self.charm_certificate_transfer,
+        )
+
+    def _current_workload_tracing_config(
+        self,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        return self._current_tracing_config(
+            tracing_requirer=self.workload_tracing_requirer,
+            certificate_transfer=self.workload_certificate_transfer,
+        )
 
     def _update_charm_tracing_config(self):
         """Update charm configuration with current tracing endpoint and CA cert information."""
         if not self.unit.is_leader():
             return
 
-        grpc_endpoint, http_endpoint, ca_cert = self._current_tracing_config()
+        grpc_endpoint, http_endpoint, ca_cert = self._current_charm_tracing_config()
         try:
             self._control_socket.set_charm_tracing_config(
                 grpc_endpoint=grpc_endpoint,
@@ -425,6 +504,23 @@ class JujuControllerCharm(CharmBase):
         except Exception as exc:
             logger.error("failed to set charm tracing config: %s", exc)
             self._stored.tracing_status_error = "failed to set charm tracing config"
+
+    def _update_workload_tracing_config(self):
+        """Update workload tracing configuration with current endpoint and CA cert information."""
+        if not self.unit.is_leader():
+            return
+
+        grpc_endpoint, http_endpoint, ca_cert = self._current_workload_tracing_config()
+        try:
+            self._control_socket.set_workload_tracing_config(
+                grpc_endpoint=grpc_endpoint,
+                http_endpoint=http_endpoint,
+                ca_cert=ca_cert,
+            )
+            self._stored.workload_tracing_status_error = None
+        except Exception as exc:
+            logger.error("failed to set workload tracing config: %s", exc)
+            self._stored.workload_tracing_status_error = "failed to set workload tracing config"
 
     def _on_s3_credentials_changed(self, event: CredentialsChangedEvent):
         """Handle new or updated S3 credentials."""
