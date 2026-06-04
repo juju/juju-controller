@@ -38,6 +38,9 @@ class ControlSocketClient(unixsocket.SocketClient):
         grpc_endpoint: Optional[str],
         http_endpoint: Optional[str],
         ca_cert: Optional[str],
+        open_telemetry_stack_traces: Optional[bool] = None,
+        open_telemetry_sample_ratio: Optional[float] = None,
+        open_telemetry_tail_sampling_threshold: Optional[str] = None,
     ):
         """Set the tracing configuration for the charm."""
         body = {
@@ -45,6 +48,14 @@ class ControlSocketClient(unixsocket.SocketClient):
             "http_endpoint": http_endpoint,
             "ca_cert": ca_cert,
         }
+        if open_telemetry_stack_traces is not None:
+            body["open_telemetry_stack_traces"] = open_telemetry_stack_traces
+        if open_telemetry_sample_ratio is not None:
+            body["open_telemetry_sample_ratio"] = open_telemetry_sample_ratio
+        if open_telemetry_tail_sampling_threshold is not None:
+            body["open_telemetry_tail_sampling_threshold"] = (
+                open_telemetry_tail_sampling_threshold
+            )
         resp = self.json_request(
             method='POST',
             path='/charm-tracing-config',
