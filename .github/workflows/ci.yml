@@ -66,8 +66,7 @@ jobs:
 
       - name: Install charmcraft
         # We use latest because there's no 4.x track yet.
-        # We currently need edge to get 26.04 support.
-        run: sudo snap install charmcraft --classic --channel=latest/edge
+        run: sudo snap install charmcraft --classic --channel=latest/stable
 
       - name: Pack charm
         run: sg lxd -c "charmcraft pack"
@@ -136,7 +135,6 @@ jobs:
           CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
         run: |
           # We use latest because there's no 4.x track yet.
-          # We currently need edge to get 26.04 support.
           sudo snap install charmcraft --channel latest/stable --classic
           for FILE in *.charm; do
             echo "Uploading: $FILE"
@@ -170,12 +168,12 @@ jobs:
       if: matrix.cloud == 'microk8s'
       uses: balchua/microk8s-actions@v0.4.2
       with:
-        channel: "1.35-strict/stable"
+        channel: "1.36-strict/stable"
         addons: '["dns", "hostpath-storage"]'
 
     - name: Install Juju
       run: |
-        sudo snap install juju --channel 3.6/candidate
+        sudo snap install juju --channel 3/stable
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
@@ -188,7 +186,6 @@ jobs:
       run: |
         sg snap_microk8s <<EOF
           juju bootstrap microk8s c \
-            --config agent-stream=proposed \
             --controller-charm-channel=${{ needs.channel.outputs.test }}
         EOF
 
