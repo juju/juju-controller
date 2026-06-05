@@ -143,20 +143,34 @@ jobs:
 
 
   integration:
-    name: "Integration tests"
+    name: Integration tests (${{ matrix.test_name }})
     runs-on: ubuntu-latest
     needs: [build, upload, channel]
     strategy:
       fail-fast: false
       matrix:
-        cloud: ["lxd", "microk8s"]
+        include:
+          - test_name: lxd-20.04
+            cloud: lxd
+            bootstrap_base: ubuntu@20.04
+          - test_name: lxd-22.04
+            cloud: lxd
+            bootstrap_base: ubuntu@22.04
+          - test_name: lxd-24.04
+            cloud: lxd
+            bootstrap_base: ubuntu@24.04
+          - test_name: lxd-26.04
+            cloud: lxd
+            bootstrap_base: ubuntu@26.04
+          - test_name: microk8s
+            cloud: microk8s
 
     steps:
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
       uses: actions/upload-artifact@v4
       with:
-        name: charmcraft-upload-logs
+        name: charmcraft-upload-logs-${{ matrix.test_name }}
         path: ~/.local/state/charmcraft/log/
       continue-on-error: true
 
@@ -179,6 +193,7 @@ jobs:
       if: matrix.cloud == 'lxd'
       run: |
         juju bootstrap lxd c \
+          --bootstrap-base=${{ matrix.bootstrap_base }} \
           --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Bootstrap on MicroK8s
@@ -200,7 +215,7 @@ jobs:
           juju status
           sleep 10
 
-          elapsed=$(date -u +%s)-${start_time}
+          elapsed=$(( $(date -u +%s) - start_time ))
           if [[ ${elapsed} -ge 600 ]]; then
             echo "Timed out waiting for controller to become active"
             juju status

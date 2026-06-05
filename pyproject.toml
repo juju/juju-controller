@@ -6,7 +6,6 @@ dependencies = [
     "ops",
     "charmhelpers",
     "cosl",
-    "PyYAML"
 ]
 
 [project.optional-dependencies]
