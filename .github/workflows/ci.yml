@@ -65,7 +65,8 @@ jobs:
           newgrp lxd
 
       - name: Install charmcraft
-        run: sudo snap install charmcraft --classic --channel=3.x/stable
+        # We use latest because there's no 4.x track yet.
+        run: sudo snap install charmcraft --classic --channel=latest/stable
 
       - name: Pack charm
         run: sg lxd -c "charmcraft pack"
@@ -133,7 +134,8 @@ jobs:
         env:
           CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
         run: |
-          sudo snap install charmcraft --channel 3.x/stable --classic
+          # We use latest because there's no 4.x track yet.
+          sudo snap install charmcraft --channel latest/stable --classic
           for FILE in *.charm; do
             echo "Uploading: $FILE"
             charmcraft upload --name "$CHARM_NAME" --release "${{ needs.channel.outputs.test }}" "$FILE" 
@@ -141,20 +143,34 @@ jobs:
 
 
   integration:
-    name: "Integration tests"
+    name: Integration tests (${{ matrix.test_name }})
     runs-on: ubuntu-latest
     needs: [build, upload, channel]
     strategy:
       fail-fast: false
       matrix:
-        cloud: ["lxd", "microk8s"]
+        include:
+          - test_name: lxd-20.04
+            cloud: lxd
+            bootstrap_base: ubuntu@20.04
+          - test_name: lxd-22.04
+            cloud: lxd
+            bootstrap_base: ubuntu@22.04
+          - test_name: lxd-24.04
+            cloud: lxd
+            bootstrap_base: ubuntu@24.04
+          - test_name: lxd-26.04
+            cloud: lxd
+            bootstrap_base: ubuntu@26.04
+          - test_name: microk8s
+            cloud: microk8s
 
     steps:
     - name: Save charmcraft logs as artifact
       if: always() && steps.charmcraft.outcome != 'skipped'
       uses: actions/upload-artifact@v4
       with:
-        name: charmcraft-upload-logs
+        name: charmcraft-upload-logs-${{ matrix.test_name }}
         path: ~/.local/state/charmcraft/log/
       continue-on-error: true
 
@@ -166,17 +182,18 @@ jobs:
       if: matrix.cloud == 'microk8s'
       uses: balchua/microk8s-actions@v0.4.2
       with:
-        channel: "1.25-strict/stable"
+        channel: "1.36-strict/stable"
         addons: '["dns", "hostpath-storage"]'
 
     - name: Install Juju
       run: |
-        sudo snap install juju --channel 3.6/candidate
+        sudo snap install juju --channel 3/stable
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
       run: |
         juju bootstrap lxd c \
+          --bootstrap-base=${{ matrix.bootstrap_base }} \
           --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Bootstrap on MicroK8s
@@ -198,7 +215,7 @@ jobs:
           juju status
           sleep 10
 
-          elapsed=$(date -u +%s)-${start_time}
+          elapsed=$(( $(date -u +%s) - start_time ))
           if [[ ${elapsed} -ge 600 ]]; then
             echo "Timed out waiting for controller to become active"
             juju status
@@ -211,7 +228,11 @@ jobs:
       run: |
         set -x
         set +e
-        juju status
+        juju status -m controller
         juju debug-log -m controller --replay
+        sg snap_microk8s <<EOF
+          microk8s.kubectl -n controller-c get all
+          microk8s.kubectl -n controller-c get -o yaml pod/controller-0
+        EOF
 
     # TODO: test integration with dashboard / ha-proxy
