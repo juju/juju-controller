@@ -798,6 +798,56 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_removed_clears_endpoints_with_invalid_config(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 1)
+
+        harness.remove_relation(relation_id)
+
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 2)
+        mock_set_workload_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_set_and_remove_do_not_change_charm_tracing(
         self,
         mock_set_workload_tracing_config,

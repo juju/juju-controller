@@ -323,11 +323,11 @@ class JujuControllerCharm(CharmBase):
             ),
         }
         logger.info("workload tracing endpoints updated: %s", endpoints)
-        self._update_workload_tracing_config()
+        self._update_workload_tracing_config(allow_endpoint_only=True)
 
     def _on_workload_tracing_relation_removed(self, event):
         logger.info("workload tracing endpoints cleared")
-        self._update_workload_tracing_config()
+        self._update_workload_tracing_config(allow_endpoint_only=True)
 
     def _on_receive_workload_ca_cert_updated(self, event):
         ca_list = event.certificates
@@ -335,11 +335,11 @@ class JujuControllerCharm(CharmBase):
             return
 
         logger.info("workload CA certificate updated from relation id %s", event.relation_id)
-        self._update_workload_tracing_config()
+        self._update_workload_tracing_config(allow_endpoint_only=True)
 
     def _on_receive_workload_ca_cert_removed(self, event):
         logger.info("workload CA certificate removed from relation id %s", event.relation_id)
-        self._update_workload_tracing_config()
+        self._update_workload_tracing_config(allow_endpoint_only=True)
 
     def _update_bind_addresses(self, relation):
         """Maintain our own bind address in relation data.
@@ -522,12 +522,13 @@ class JujuControllerCharm(CharmBase):
             logger.error("failed to set charm tracing config: %s", exc)
             self._stored.tracing_status_error = "failed to set charm tracing config"
 
-    def _update_workload_tracing_config(self):
+    def _update_workload_tracing_config(self, allow_endpoint_only=False):
         """Update workload tracing configuration with current endpoint and CA cert information."""
         if not self.unit.is_leader():
             return
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_workload_tracing_config()
+        open_telemetry_config = {}
         try:
             (
                 open_telemetry_stack_traces,
@@ -535,22 +536,27 @@ class JujuControllerCharm(CharmBase):
                 open_telemetry_tail_sampling_threshold,
                 insecure_skip_verify,
             ) = self._current_open_telemetry_config()
+            open_telemetry_config = {
+                "open_telemetry_stack_traces": open_telemetry_stack_traces,
+                "open_telemetry_sample_ratio": open_telemetry_sample_ratio,
+                "open_telemetry_tail_sampling_threshold": open_telemetry_tail_sampling_threshold,
+                "insecure_skip_verify": insecure_skip_verify,
+            }
         except ValueError as exc:
             logger.error("%s", exc)
             self._stored.workload_tracing_status_error = str(exc)
-            return
+            if not allow_endpoint_only:
+                return
 
         try:
             self._control_socket.set_workload_tracing_config(
                 grpc_endpoint=grpc_endpoint,
                 http_endpoint=http_endpoint,
                 ca_cert=ca_cert,
-                open_telemetry_stack_traces=open_telemetry_stack_traces,
-                open_telemetry_sample_ratio=open_telemetry_sample_ratio,
-                open_telemetry_tail_sampling_threshold=open_telemetry_tail_sampling_threshold,
-                insecure_skip_verify=insecure_skip_verify,
+                **open_telemetry_config,
             )
-            self._stored.workload_tracing_status_error = None
+            if open_telemetry_config:
+                self._stored.workload_tracing_status_error = None
         except Exception as exc:
             logger.error("failed to set workload tracing config: %s", exc)
             self._stored.workload_tracing_status_error = "failed to set workload tracing config"
