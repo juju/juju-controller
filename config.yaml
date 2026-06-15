@@ -26,3 +26,7 @@ options:
     default: "1ms"
     description: The OpenTelemetry tail sampling threshold as a duration string.
     type: string
+  workload-tracing-insecure-skip-verify:
+    default: false
+    description: Whether workload tracing should skip TLS certificate verification.
+    type: boolean

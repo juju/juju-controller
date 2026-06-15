@@ -202,7 +202,7 @@ class JujuControllerCharm(CharmBase):
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
         logger.info('got a new controller-url: %r', controller_url)
-        self._update_charm_tracing_config()
+        self._update_workload_tracing_config()
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
@@ -495,13 +495,14 @@ class JujuControllerCharm(CharmBase):
                 "invalid open-telemetry-sample-ratio: must be between 0 and 1"
             )
 
-    def _current_open_telemetry_config(self) -> Tuple[bool, float, str]:
+    def _current_open_telemetry_config(self) -> Tuple[bool, float, str, bool]:
         sample_ratio = float(self.config["open-telemetry-sample-ratio"])
         self._validate_open_telemetry_sample_ratio(sample_ratio)
         return (
             self.config["open-telemetry-stack-traces"],
             sample_ratio,
             self.config["open-telemetry-tail-sampling-threshold"],
+            self.config["workload-tracing-insecure-skip-verify"],
         )
 
     def _update_charm_tracing_config(self):
@@ -511,24 +512,10 @@ class JujuControllerCharm(CharmBase):
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_charm_tracing_config()
         try:
-            (
-                open_telemetry_stack_traces,
-                open_telemetry_sample_ratio,
-                open_telemetry_tail_sampling_threshold,
-            ) = self._current_open_telemetry_config()
-        except ValueError as exc:
-            logger.error("%s", exc)
-            self._stored.tracing_status_error = str(exc)
-            return
-
-        try:
             self._control_socket.set_charm_tracing_config(
                 grpc_endpoint=grpc_endpoint,
                 http_endpoint=http_endpoint,
                 ca_cert=ca_cert,
-                open_telemetry_stack_traces=open_telemetry_stack_traces,
-                open_telemetry_sample_ratio=open_telemetry_sample_ratio,
-                open_telemetry_tail_sampling_threshold=open_telemetry_tail_sampling_threshold,
             )
             self._stored.tracing_status_error = None
         except Exception as exc:
@@ -542,10 +529,26 @@ class JujuControllerCharm(CharmBase):
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_workload_tracing_config()
         try:
+            (
+                open_telemetry_stack_traces,
+                open_telemetry_sample_ratio,
+                open_telemetry_tail_sampling_threshold,
+                insecure_skip_verify,
+            ) = self._current_open_telemetry_config()
+        except ValueError as exc:
+            logger.error("%s", exc)
+            self._stored.workload_tracing_status_error = str(exc)
+            return
+
+        try:
             self._control_socket.set_workload_tracing_config(
                 grpc_endpoint=grpc_endpoint,
                 http_endpoint=http_endpoint,
                 ca_cert=ca_cert,
+                open_telemetry_stack_traces=open_telemetry_stack_traces,
+                open_telemetry_sample_ratio=open_telemetry_sample_ratio,
+                open_telemetry_tail_sampling_threshold=open_telemetry_tail_sampling_threshold,
+                insecure_skip_verify=insecure_skip_verify,
             )
             self._stored.workload_tracing_status_error = None
         except Exception as exc:

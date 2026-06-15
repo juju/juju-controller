@@ -170,9 +170,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -188,9 +185,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -215,9 +209,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -305,9 +296,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
         harness.remove_relation(relation_id)
@@ -317,9 +305,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -344,9 +329,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert="\n".join([cert_a, cert_b]),
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -381,9 +363,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=cert,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
         harness.remove_relation(relation_id)
@@ -393,9 +372,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -417,18 +393,20 @@ class TestCharm(unittest.TestCase):
                 "open-telemetry-stack-traces": True,
                 "open-telemetry-sample-ratio": 0.5,
                 "open-telemetry-tail-sampling-threshold": "250ms",
+                "workload-tracing-insecure-skip-verify": True,
             }
         )
 
-        mock_set_charm_tracing_config.assert_called_once_with(
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
             open_telemetry_stack_traces=True,
             open_telemetry_sample_ratio=0.5,
             open_telemetry_tail_sampling_threshold="250ms",
+            insecure_skip_verify=True,
         )
-        mock_set_workload_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
@@ -481,24 +459,26 @@ class TestCharm(unittest.TestCase):
 
         harness.update_config({"open-telemetry-sample-ratio": 0.25})
 
-        mock_set_charm_tracing_config.assert_called_once_with(
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
             open_telemetry_stack_traces=False,
             open_telemetry_sample_ratio=0.25,
             open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch(
-        "controlsocket.ControlSocketClient.set_charm_tracing_config",
+        "controlsocket.ControlSocketClient.set_workload_tracing_config",
         side_effect=SocketConnectionError("could not connect to socket"),
     )
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_config_changed_sets_blocked_status_on_socket_error(
         self,
         _mock_set_charm_tracing_config,
@@ -512,13 +492,21 @@ class TestCharm(unittest.TestCase):
 
         harness.update_config({"open-telemetry-sample-ratio": 0.5})
 
-        mock_set_workload_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.5,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
-            "failed to set charm tracing config",
+            "failed to set workload tracing config",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -535,7 +523,7 @@ class TestCharm(unittest.TestCase):
         mock_set_charm_tracing_config.reset_mock()
         mock_set_workload_tracing_config.reset_mock()
 
-        mock_set_charm_tracing_config.side_effect = [
+        mock_set_workload_tracing_config.side_effect = [
             SocketConnectionError("could not connect to socket"),
             None,
         ]
@@ -545,14 +533,14 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertEqual(
             harness.charm.unit.status.message,
-            "failed to set charm tracing config",
+            "failed to set workload tracing config",
         )
 
         harness.update_config({"open-telemetry-stack-traces": True})
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
-        mock_set_workload_tracing_config.assert_not_called()
+        mock_set_charm_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -579,9 +567,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
         mock_set_workload_tracing_config.assert_not_called()
 
@@ -591,9 +576,6 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
         )
         mock_set_workload_tracing_config.assert_not_called()
 
@@ -623,6 +605,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -642,6 +628,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -672,6 +662,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
@@ -782,6 +776,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
         harness.remove_relation(relation_id)
@@ -791,6 +789,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -818,6 +820,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
         mock_set_charm_tracing_config.assert_not_called()
 
@@ -827,6 +833,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
         mock_set_charm_tracing_config.assert_not_called()
 
@@ -858,6 +868,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert="\n".join([cert_a, cert_b]),
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
@@ -897,6 +911,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=cert,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
         harness.remove_relation(relation_id)
@@ -906,6 +924,10 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
