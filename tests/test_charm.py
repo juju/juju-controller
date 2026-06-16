@@ -219,7 +219,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
 
         event = type("Event", (), {"relation": object()})()
-        with patch.object(harness.charm.tracing_requirer, "is_ready", return_value=False):
+        with patch.object(harness.charm.charm_tracing_requirer, "is_ready", return_value=False):
             harness.charm._on_tracing_relation_changed(event)
 
         mock_set_tracing_config.assert_not_called()
@@ -231,6 +231,7 @@ class TestCharm(unittest.TestCase):
     ):
         harness = self.harness
         harness.set_leader(True)
+        harness.charm._stored.workload_tracing_status_error = None
         mock_set_tracing_config.reset_mock()
         mock_set_tracing_config.side_effect = SocketConnectionError("could not connect to socket")
 
@@ -254,6 +255,7 @@ class TestCharm(unittest.TestCase):
     def test_tracing_status_error_clears_after_success(self, mock_set_tracing_config, *_):
         harness = self.harness
         harness.set_leader(True)
+        harness.charm._stored.workload_tracing_status_error = None
         mock_set_tracing_config.reset_mock()
 
         relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
@@ -372,6 +374,612 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_config_changed_updates_open_telemetry_tracing_values(
+        self,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        harness.update_config(
+            {
+                "open-telemetry-stack-traces": True,
+                "open-telemetry-sample-ratio": 0.5,
+                "open-telemetry-tail-sampling-threshold": "250ms",
+                "workload-tracing-insecure-skip-verify": True,
+            }
+        )
+
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=True,
+            open_telemetry_sample_ratio=0.5,
+            open_telemetry_tail_sampling_threshold="250ms",
+            insecure_skip_verify=True,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_config_changed_invalid_open_telemetry_sample_ratio_sets_blocked(
+        self,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_not_called()
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_config_changed_invalid_open_telemetry_sample_ratio_recovers_on_valid_update(
+        self,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+        )
+        mock_set_charm_tracing_config.assert_not_called()
+
+        harness.update_config({"open-telemetry-sample-ratio": 0.25})
+
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.25,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch(
+        "controlsocket.ControlSocketClient.set_workload_tracing_config",
+        side_effect=SocketConnectionError("could not connect to socket"),
+    )
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_config_changed_sets_blocked_status_on_socket_error(
+        self,
+        _mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        _mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        harness.update_config({"open-telemetry-sample-ratio": 0.5})
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.5,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "failed to set workload tracing config",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_config_changed_socket_error_status_recovers_after_success(
+        self,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        mock_set_workload_tracing_config.side_effect = [
+            SocketConnectionError("could not connect to socket"),
+            None,
+        ]
+        harness.update_config({"open-telemetry-sample-ratio": 0.5})
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "failed to set workload tracing config",
+        )
+
+        harness.update_config({"open-telemetry-stack-traces": True})
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        mock_set_charm_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_charm_tracing_set_and_remove_do_not_change_workload_tracing(
+        self,
+        mock_set_workload_tracing_config,
+        mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        mock_set_charm_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+        )
+        mock_set_workload_tracing_config.assert_not_called()
+
+        harness.remove_relation(relation_id)
+        self.assertEqual(mock_set_charm_tracing_config.call_count, 2)
+        mock_set_charm_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+        )
+        mock_set_workload_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_updates_endpoints(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_cleared_on_leader_elected_without_relations(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+
+        harness.set_leader(True)
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_replayed_on_leader_elected(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+
+        mock_set_workload_tracing_config.assert_not_called()
+
+        harness.set_leader(True)
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_change_ignores_not_ready(
+        self, mock_set_workload_tracing_config
+    ):
+        harness = self.harness
+
+        event = type("Event", (), {"relation": object()})()
+        with patch.object(
+            harness.charm.workload_tracing_requirer, "is_ready", return_value=False
+        ):
+            harness.charm._on_workload_tracing_relation_changed(event)
+
+        mock_set_workload_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_update_sets_blocked_on_socket_error(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.side_effect = SocketConnectionError(
+            "could not connect to socket"
+        )
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message, "failed to set workload tracing config"
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_status_error_clears_after_success(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        mock_set_workload_tracing_config.side_effect = [
+            SocketConnectionError("could not connect to socket"),
+            None,
+        ]
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertEqual(
+            harness.charm.unit.status.message, "failed to set workload tracing config"
+        )
+
+        harness.remove_relation(relation_id)
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_removed_clears_endpoints(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+        harness.remove_relation(relation_id)
+
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 2)
+        mock_set_workload_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_relation_removed_clears_endpoints_with_invalid_config(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 1)
+
+        harness.remove_relation(relation_id)
+
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 2)
+        mock_set_workload_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_set_and_remove_do_not_change_charm_tracing(
+        self,
+        mock_set_workload_tracing_config,
+        mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(),
+        )
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="http://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        mock_set_charm_tracing_config.assert_not_called()
+
+        harness.remove_relation(relation_id)
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 2)
+        mock_set_workload_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        mock_set_charm_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_receive_workload_ca_cert_updates_tracing_config(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing-ca-cert", "cert-provider")
+        harness.add_relation_unit(relation_id, "cert-provider/0")
+
+        cert_a = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        cert_b = "-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----"
+        harness.update_relation_data(
+            relation_id,
+            "cert-provider",
+            certificate_provider_data({cert_b, cert_a}),
+        )
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert="\n".join([cert_a, cert_b]),
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_receive_workload_ca_cert_update_ignores_empty_cert_list(
+        self, mock_set_workload_tracing_config
+    ):
+        harness = self.harness
+
+        event = type("Event", (), {"certificates": set(), "relation_id": 1})()
+        harness.charm._on_receive_workload_ca_cert_updated(event)
+
+        mock_set_workload_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_receive_workload_ca_cert_removed_clears_tracing_ca_cert(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing-ca-cert", "cert-provider")
+        harness.add_relation_unit(relation_id, "cert-provider/0")
+
+        cert = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        harness.update_relation_data(
+            relation_id,
+            "cert-provider",
+            certificate_provider_data({cert}),
+        )
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=cert,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
+        harness.remove_relation(relation_id)
+
+        self.assertEqual(mock_set_workload_tracing_config.call_count, 2)
+        mock_set_workload_tracing_config.assert_called_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
     def test_apiaddresses_missing(self, _):
         harness = self.harness
@@ -426,6 +1034,7 @@ class TestCharm(unittest.TestCase):
 
         harness.set_leader()
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         # Have another unit enter the relation.
         # Its bind address should end up in the application data bindings list.
@@ -526,6 +1135,7 @@ class TestCharm(unittest.TestCase):
 
         harness.set_leader()
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         # Have another unit enter the relation.
         relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
@@ -557,6 +1167,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         relation_id = harness.add_relation("s3-backend", "s3-integrator")
         harness.add_relation_unit(relation_id, "s3-integrator/0")
@@ -587,6 +1198,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         relation_id = harness.add_relation("s3-backend", "s3-integrator")
         harness.add_relation_unit(relation_id, "s3-integrator/0")
@@ -616,6 +1228,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         relation_id = harness.add_relation("s3-backend", "s3-integrator")
         harness.add_relation_unit(relation_id, "s3-integrator/0")
@@ -695,6 +1308,7 @@ class TestCharm(unittest.TestCase):
 
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
@@ -705,6 +1319,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         relation_id = harness.add_relation("s3-backend", "s3-integrator")
         harness.add_relation_unit(relation_id, "s3-integrator/0")
@@ -786,6 +1401,7 @@ class TestCharm(unittest.TestCase):
         harness = self.harness
         harness.set_leader(True)
         harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
 
         relation_id = harness.add_relation("s3-backend", "s3-integrator")
         harness.add_relation_unit(relation_id, "s3-integrator/0")

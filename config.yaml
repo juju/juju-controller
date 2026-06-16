@@ -14,3 +14,19 @@ options:
     default: true
     description: Whether this is a standalone Juju controller
     type: boolean
+  open-telemetry-stack-traces:
+    default: false
+    description: Whether stack traces should be added per OpenTelemetry span.
+    type: boolean
+  open-telemetry-sample-ratio:
+    default: 0.1
+    description: The OpenTelemetry sampling ratio (must be between 0 and 1).
+    type: float
+  open-telemetry-tail-sampling-threshold:
+    default: "1ms"
+    description: The OpenTelemetry tail sampling threshold as a duration string.
+    type: string
+  workload-tracing-insecure-skip-verify:
+    default: false
+    description: Whether workload tracing should skip TLS certificate verification.
+    type: boolean

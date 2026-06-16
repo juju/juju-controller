@@ -52,6 +52,39 @@ class ControlSocketClient(unixsocket.SocketClient):
         )
         logger.debug('result of set_charm_tracing_config request: %r', resp)
 
+    def set_workload_tracing_config(
+        self,
+        grpc_endpoint: Optional[str],
+        http_endpoint: Optional[str],
+        ca_cert: Optional[str],
+        open_telemetry_stack_traces: Optional[bool] = None,
+        open_telemetry_sample_ratio: Optional[float] = None,
+        open_telemetry_tail_sampling_threshold: Optional[str] = None,
+        insecure_skip_verify: Optional[bool] = None,
+    ):
+        """Set the tracing configuration for the controller workload."""
+        body = {
+            "grpc_endpoint": grpc_endpoint,
+            "http_endpoint": http_endpoint,
+            "ca_cert": ca_cert,
+        }
+        if open_telemetry_stack_traces is not None:
+            body["open_telemetry_stack_traces"] = open_telemetry_stack_traces
+        if open_telemetry_sample_ratio is not None:
+            body["open_telemetry_sample_ratio"] = open_telemetry_sample_ratio
+        if open_telemetry_tail_sampling_threshold is not None:
+            body["open_telemetry_tail_sampling_threshold"] = (
+                open_telemetry_tail_sampling_threshold
+            )
+        if insecure_skip_verify is not None:
+            body["insecure_skip_verify"] = insecure_skip_verify
+        resp = self.json_request(
+            method='POST',
+            path='/workload-tracing-config',
+            body=body,
+        )
+        logger.debug('result of set_workload_tracing_config request: %r', resp)
+
     def add_s3_credentials(self, credentials: dict):
         resp = self.json_request(
             method='POST',
