@@ -42,6 +42,10 @@ requires:
     interface: loki_push_api
     limit: 1
     optional: true
+  loki-push-api-ca-cert:
+    interface: certificate_transfer
+    limit: 1
+    optional: true
 
 peers:
   dbcluster:

@@ -58,6 +58,9 @@ class JujuControllerCharm(CharmBase):
         )
         self._s3 = S3Requirer(self, "s3-backend")
         self._loki_consumer = LokiPushApiConsumer(self, "loki-push-api")
+        self.loki_certificate_transfer = CertificateTransferRequires(
+            self, relationship_name="loki-push-api-ca-cert"
+        )
 
         self._stored.set_default(
             last_bind_addresses=[],
@@ -160,6 +163,14 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self._loki_consumer.on.loki_push_api_endpoint_departed,
             self._on_loki_push_api_endpoint_departed)
+        self.framework.observe(
+            self.loki_certificate_transfer.on.certificate_set_updated,
+            self._on_receive_loki_ca_cert_updated,
+        )
+        self.framework.observe(
+            self.loki_certificate_transfer.on.certificates_removed,
+            self._on_receive_loki_ca_cert_removed,
+        )
 
     def _on_install(self, event: InstallEvent):
         """Ensure that the controller configuration file exists."""
@@ -239,6 +250,7 @@ class JujuControllerCharm(CharmBase):
         controller_url = self.config['controller-url']
         logger.info('got a new controller-url: %r', controller_url)
         self._update_workload_tracing_config()
+        self._reconcile_loki_endpoint()
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
@@ -507,9 +519,13 @@ class JujuControllerCharm(CharmBase):
                 if receiver.protocol.name == "otlp_http" and http_endpoint is None:
                     http_endpoint = receiver.url
 
+        return grpc_endpoint, http_endpoint, self._current_ca_cert(certificate_transfer)
+
+    def _current_ca_cert(
+        self, certificate_transfer: CertificateTransferRequires
+    ) -> Optional[str]:
         certificates = certificate_transfer.get_all_certificates()
-        ca_cert = "\n".join(sorted(certificates)) if certificates else None
-        return grpc_endpoint, http_endpoint, ca_cert
+        return "\n".join(sorted(certificates)) if certificates else None
 
     def _current_charm_tracing_config(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         return self._current_tracing_config(
@@ -641,11 +657,27 @@ class JujuControllerCharm(CharmBase):
         """Handle removal of Loki push API endpoint."""
         self._reconcile_loki_endpoint()
 
+    def _on_receive_loki_ca_cert_updated(self, event):
+        ca_list = event.certificates
+        if not ca_list:
+            return
+
+        logger.info("Loki CA certificate updated from relation id %s", event.relation_id)
+        self._reconcile_loki_endpoint(report_applying_status=True)
+
+    def _on_receive_loki_ca_cert_removed(self, event):
+        logger.info("Loki CA certificate removed from relation id %s", event.relation_id)
+        self._reconcile_loki_endpoint()
+
     def _current_loki_endpoint(self) -> Optional[dict]:
         endpoints = self._loki_consumer.loki_endpoints
         if not endpoints:
             return None
-        return {"url": endpoints[0]["url"]}
+        return {
+            "url": endpoints[0]["url"],
+            "ca_cert": self._current_ca_cert(self.loki_certificate_transfer),
+            "insecure_skip_verify": self.config["loki-insecure-skip-verify"],
+        }
 
     def _reconcile_loki_endpoint(self, report_applying_status: bool = False):
         if not self.unit.is_leader():

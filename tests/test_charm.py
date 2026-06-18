@@ -377,8 +377,10 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_config_changed_updates_open_telemetry_tracing_values(
         self,
+        mock_set_loki_endpoint,
         mock_set_charm_tracing_config,
         mock_set_workload_tracing_config,
         *_,
@@ -398,6 +400,7 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_charm_tracing_config.assert_not_called()
+        mock_set_loki_endpoint.assert_not_called()
         mock_set_workload_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
@@ -406,6 +409,60 @@ class TestCharm(unittest.TestCase):
             open_telemetry_sample_ratio=0.5,
             open_telemetry_tail_sampling_threshold="250ms",
             insecure_skip_verify=True,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_config_changed_updates_loki_insecure_skip_verify(
+        self,
+        mock_set_loki_endpoint,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+        mock_set_loki_endpoint.reset_mock()
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+        mock_set_loki_endpoint.assert_called_once_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
+        )
+
+        mock_set_loki_endpoint.reset_mock()
+        harness.update_config({"loki-insecure-skip-verify": True})
+
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        self.assertGreaterEqual(mock_set_loki_endpoint.call_count, 1)
+        mock_set_loki_endpoint.assert_called_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": True,
+            }
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -1434,7 +1491,11 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_loki_endpoint.assert_called_once_with(
-            {"url": "http://loki:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
         )
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
         self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
@@ -1472,7 +1533,11 @@ class TestCharm(unittest.TestCase):
 
         harness.set_leader(True)
         mock_set_loki_endpoint.assert_called_once_with(
-            {"url": "http://loki:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
         )
 
     @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
@@ -1491,7 +1556,11 @@ class TestCharm(unittest.TestCase):
             {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
         )
         mock_set_loki_endpoint.assert_called_once_with(
-            {"url": "http://loki:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
         )
 
         harness.set_leader(False)
@@ -1633,7 +1702,11 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_loki_endpoint.assert_called_with(
-            {"url": "http://loki:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
         )
 
         # Update the endpoint URL.
@@ -1644,9 +1717,101 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_loki_endpoint.assert_called_with(
-            {"url": "http://loki-new:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki-new:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
         )
         self.assertEqual(mock_set_loki_endpoint.call_count, 2)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_receive_loki_ca_cert_updates_loki_config(self, mock_set_loki_endpoint, *_):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        cert_relation_id = harness.add_relation("loki-push-api-ca-cert", "cert-provider")
+        harness.add_relation_unit(cert_relation_id, "cert-provider/0")
+
+        cert_a = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        cert_b = "-----BEGIN CERTIFICATE-----\nb\n-----END CERTIFICATE-----"
+        mock_set_loki_endpoint.reset_mock()
+        harness.update_relation_data(
+            cert_relation_id,
+            "cert-provider",
+            certificate_provider_data({cert_b, cert_a}),
+        )
+
+        mock_set_loki_endpoint.assert_called_once_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": "\n".join([cert_a, cert_b]),
+                "insecure_skip_verify": False,
+            }
+        )
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_receive_loki_ca_cert_update_ignores_empty_cert_list(self, mock_set_loki_endpoint):
+        harness = self.harness
+
+        event = type("Event", (), {"certificates": set(), "relation_id": 1})()
+        harness.charm._on_receive_loki_ca_cert_updated(event)
+
+        mock_set_loki_endpoint.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_receive_loki_ca_cert_removed_clears_loki_ca_cert(
+        self, mock_set_loki_endpoint, *_
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        endpoint_relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(endpoint_relation_id, "loki/0")
+        harness.update_relation_data(
+            endpoint_relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        cert_relation_id = harness.add_relation("loki-push-api-ca-cert", "cert-provider")
+        harness.add_relation_unit(cert_relation_id, "cert-provider/0")
+
+        cert = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        mock_set_loki_endpoint.reset_mock()
+        harness.update_relation_data(
+            cert_relation_id,
+            "cert-provider",
+            certificate_provider_data({cert}),
+        )
+        mock_set_loki_endpoint.assert_called_once_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": cert,
+                "insecure_skip_verify": False,
+            }
+        )
+
+        harness.remove_relation(cert_relation_id)
+
+        self.assertEqual(mock_set_loki_endpoint.call_count, 2)
+        mock_set_loki_endpoint.assert_called_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+            }
+        )
 
 
 class mockNetwork:

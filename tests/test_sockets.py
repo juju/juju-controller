@@ -152,14 +152,22 @@ class TestClass(unittest.TestCase):
         mock_opener.expect(
             url='http://localhost/loki-endpoint',
             method='POST',
-            body=r'{"url": "http://loki:3100/loki/api/v1/push"}',
+            body=(
+                r'{"url": "http://loki:3100/loki/api/v1/push", '
+                r'"ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----", '
+                r'"insecure_skip_verify": true}'
+            ),
             response=MockResponse(
                 headers=MockHeaders(content_type='application/json'),
                 body=r'{"message":"set loki endpoint"}'
             )
         )
         control_socket.set_loki_endpoint(
-            {"url": "http://loki:3100/loki/api/v1/push"}
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----",
+                "insecure_skip_verify": True,
+            }
         )
 
     def test_set_loki_endpoint_fail(self):
@@ -169,7 +177,11 @@ class TestClass(unittest.TestCase):
         mock_opener.expect(
             url='http://localhost/loki-endpoint',
             method='POST',
-            body=r'{"url": "http://loki:3100/loki/api/v1/push"}',
+            body=(
+                r'{"url": "http://loki:3100/loki/api/v1/push", '
+                r'"ca_cert": null, '
+                r'"insecure_skip_verify": false}'
+            ),
             error=urllib.error.HTTPError(
                 url='http://localhost/loki-endpoint',
                 code=500,
@@ -181,7 +193,11 @@ class TestClass(unittest.TestCase):
 
         with self.assertRaises(APIError) as cm:
             control_socket.set_loki_endpoint(
-                {"url": "http://loki:3100/loki/api/v1/push"}
+                {
+                    "url": "http://loki:3100/loki/api/v1/push",
+                    "ca_cert": None,
+                    "insecure_skip_verify": False,
+                }
             )
         self.assertEqual(cm.exception.body, {'error': 'internal error'})
         self.assertEqual(cm.exception.code, 500)
@@ -224,6 +240,7 @@ class TestClass(unittest.TestCase):
         self.assertEqual(cm.exception.body, {'error': 'loki endpoint not found'})
         self.assertEqual(cm.exception.code, 404)
         self.assertEqual(cm.exception.message, 'loki endpoint not found')
+
     def test_connection_error(self):
         mock_opener = MockOpener(self)
         control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
