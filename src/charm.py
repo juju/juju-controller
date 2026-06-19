@@ -673,10 +673,20 @@ class JujuControllerCharm(CharmBase):
         endpoints = self._loki_consumer.loki_endpoints
         if not endpoints:
             return None
+        endpoint = endpoints[0]["url"]
+        ca_cert = self._current_ca_cert(self.loki_certificate_transfer)
+        insecure_skip_verify = self.config["loki-insecure-skip-verify"]
+
+        if endpoint.startswith("https://") and not ca_cert and not insecure_skip_verify:
+            self.unit.status = BlockedStatus(
+                "loki endpoint is https but no CA cert is available"
+            )
+            return None
+
         return {
-            "url": endpoints[0]["url"],
-            "ca_cert": self._current_ca_cert(self.loki_certificate_transfer),
-            "insecure_skip_verify": self.config["loki-insecure-skip-verify"],
+            "url": endpoint,
+            "ca_cert": ca_cert,
+            "insecure_skip_verify": insecure_skip_verify,
         }
 
     def _reconcile_loki_endpoint(self, report_applying_status: bool = False):
