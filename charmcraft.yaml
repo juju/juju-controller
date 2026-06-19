@@ -9,7 +9,7 @@ type: charm
 assumes:
 - juju >= 4.1
 
-provides: 
+provides:
   dashboard:
     interface: juju-dashboard
   website:
@@ -60,6 +60,11 @@ platforms:
   ubuntu@24.04:s390x:
   ubuntu@24.04:ppc64el:
   ubuntu@24.04:riscv64:
+  ubuntu@26.04:amd64:
+  ubuntu@26.04:arm64:
+  ubuntu@26.04:s390x:
+  ubuntu@26.04:ppc64el:
+  ubuntu@26.04:riscv64:
 
 charm-libs:
   - lib: prometheus_k8s.prometheus_scrape
