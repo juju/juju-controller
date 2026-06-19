@@ -503,6 +503,10 @@ class JujuControllerCharm(CharmBase):
         """Send a reload request to the config reload socket."""
         self._config_change_socket.reload_config()
 
+    @staticmethod
+    def _endpoint_requires_ca_cert(endpoint: Optional[str]) -> bool:
+        return bool(endpoint) and endpoint.startswith(("https://", "grpcs://"))
+
     def _current_tracing_config(
         self,
         tracing_requirer: TracingEndpointRequirer,
@@ -563,6 +567,18 @@ class JujuControllerCharm(CharmBase):
             return
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_charm_tracing_config()
+        if (
+            any(
+                self._endpoint_requires_ca_cert(endpoint)
+                for endpoint in (grpc_endpoint, http_endpoint)
+            ) and not ca_cert
+        ):
+            self._stored.tracing_status_error = (
+                "charm tracing endpoint requires a CA cert, but none is available"
+            )
+            self.unit.status = BlockedStatus(self._stored.tracing_status_error)
+            return
+
         try:
             self._control_socket.set_charm_tracing_config(
                 grpc_endpoint=grpc_endpoint,
@@ -581,6 +597,8 @@ class JujuControllerCharm(CharmBase):
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_workload_tracing_config()
         open_telemetry_config = {}
+        had_invalid_open_telemetry_config = False
+        insecure_skip_verify = False
         try:
             (
                 open_telemetry_stack_traces,
@@ -597,8 +615,22 @@ class JujuControllerCharm(CharmBase):
         except ValueError as exc:
             logger.error("%s", exc)
             self._stored.workload_tracing_status_error = str(exc)
+            had_invalid_open_telemetry_config = True
             if not allow_endpoint_only:
                 return
+
+        if (
+            any(
+                self._endpoint_requires_ca_cert(endpoint)
+                for endpoint in (grpc_endpoint, http_endpoint)
+            ) and not ca_cert and not insecure_skip_verify
+        ):
+            if not had_invalid_open_telemetry_config:
+                self._stored.workload_tracing_status_error = (
+                    "workload tracing endpoint requires a CA cert, but none is available"
+                )
+            self.unit.status = BlockedStatus(self._stored.workload_tracing_status_error)
+            return
 
         try:
             self._control_socket.set_workload_tracing_config(

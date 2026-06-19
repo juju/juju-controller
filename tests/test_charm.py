@@ -52,16 +52,16 @@ cacert: fake
 '''
 
 
-def tracing_provider_data():
+def tracing_provider_data(http_url="http://tempo-http:4318", grpc_url="tempo-grpc:4317"):
     return TracingProviderAppData(
         receivers=[
             Receiver(
                 protocol=ProtocolType(name="otlp_grpc", type=TransportProtocolType.grpc),
-                url="tempo-grpc:4317",
+                url=grpc_url,
             ),
             Receiver(
                 protocol=ProtocolType(name="otlp_http", type=TransportProtocolType.http),
-                url="http://tempo-http:4318",
+                url=http_url,
             ),
         ]
     ).dump()
@@ -223,6 +223,70 @@ class TestCharm(unittest.TestCase):
             harness.charm._on_tracing_relation_changed(event)
 
         mock_set_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_https_endpoint_waits_for_ca_cert(self, mock_set_tracing_config, *_):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.workload_tracing_status_error = None
+        mock_set_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(http_url="https://tempo-http:4318"),
+        )
+
+        mock_set_tracing_config.assert_not_called()
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "charm tracing endpoint requires a CA cert, but none is available",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_https_endpoint_applies_when_ca_cert_arrives(
+        self, mock_set_tracing_config, *_
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.charm._stored.workload_tracing_status_error = None
+        mock_set_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(http_url="https://tempo-http:4318"),
+        )
+        mock_set_tracing_config.assert_not_called()
+
+        cert_relation_id = harness.add_relation("charm-tracing-ca-cert", "cert-provider")
+        harness.add_relation_unit(cert_relation_id, "cert-provider/0")
+
+        cert = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        harness.update_relation_data(
+            cert_relation_id,
+            "cert-provider",
+            certificate_provider_data({cert}),
+        )
+
+        mock_set_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="https://tempo-http:4318",
+            ca_cert=cert,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -738,6 +802,115 @@ class TestCharm(unittest.TestCase):
             harness.charm._on_workload_tracing_relation_changed(event)
 
         mock_set_workload_tracing_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_https_endpoint_waits_for_ca_cert(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(http_url="https://tempo-http:4318"),
+        )
+
+        mock_set_workload_tracing_config.assert_not_called()
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            harness.charm.unit.status.message,
+            "workload tracing endpoint requires a CA cert, but none is available",
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_https_endpoint_applies_when_ca_cert_arrives(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(http_url="https://tempo-http:4318"),
+        )
+        mock_set_workload_tracing_config.assert_not_called()
+
+        cert_relation_id = harness.add_relation("workload-tracing-ca-cert", "cert-provider")
+        harness.add_relation_unit(cert_relation_id, "cert-provider/0")
+
+        cert = "-----BEGIN CERTIFICATE-----\na\n-----END CERTIFICATE-----"
+        harness.update_relation_data(
+            cert_relation_id,
+            "cert-provider",
+            certificate_provider_data({cert}),
+        )
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="https://tempo-http:4318",
+            ca_cert=cert,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_https_endpoint_applies_with_insecure_skip_verify(
+        self,
+        mock_set_workload_tracing_config,
+        _mock_set_charm_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        harness.update_config({"workload-tracing-insecure-skip-verify": True})
+        mock_set_workload_tracing_config.reset_mock()
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "tempo-coordinator",
+            tracing_provider_data(http_url="https://tempo-http:4318"),
+        )
+
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint="tempo-grpc:4317",
+            http_endpoint="https://tempo-http:4318",
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=True,
+        )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
