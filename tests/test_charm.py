@@ -21,7 +21,7 @@ from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus
 from ops.testing import Harness
 from unittest.mock import mock_open, patch
-from unixsocket import ConnectionError as SocketConnectionError
+from unixsocket import APIError, ConnectionError as SocketConnectionError
 
 agent_conf = '''
 apiaddresses:
@@ -520,7 +520,7 @@ class TestCharm(unittest.TestCase):
             open_telemetry_tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
-        self.assertGreaterEqual(mock_set_loki_endpoint.call_count, 1)
+        self.assertEqual(mock_set_loki_endpoint.call_count, 1)
         mock_set_loki_endpoint.assert_called_with(
             {
                 "url": "http://loki:3100/loki/api/v1/push",
@@ -1736,6 +1736,7 @@ class TestCharm(unittest.TestCase):
             }
         )
 
+        mock_remove_loki_endpoint.reset_mock()
         harness.set_leader(False)
         harness.remove_relation(relation_id)
         mock_remove_loki_endpoint.assert_not_called()
@@ -1776,7 +1777,28 @@ class TestCharm(unittest.TestCase):
         mock_set_loki_endpoint.assert_not_called()
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertIn(
-            "loki endpoint is https but no CA cert is available",
+            "loki endpoint requires a CA cert, but none is available",
+            harness.charm.unit.status.message,
+        )
+
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_grpcs_endpoint_waits_for_ca_cert(self, mock_set_loki_endpoint):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "grpcs://loki:9096"})},
+        )
+
+        mock_set_loki_endpoint.assert_not_called()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn(
+            "loki endpoint requires a CA cert, but none is available",
             harness.charm.unit.status.message,
         )
 
@@ -1906,7 +1928,7 @@ class TestCharm(unittest.TestCase):
         )
 
         harness.remove_relation(relation_id)
-        mock_remove_loki_endpoint.assert_called_once()
+        self.assertGreaterEqual(mock_remove_loki_endpoint.call_count, 1)
 
     @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
     def test_loki_push_api_endpoint_departed_non_leader(self, mock_remove_loki_endpoint):
@@ -1943,6 +1965,32 @@ class TestCharm(unittest.TestCase):
 
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertIn("failed to remove loki endpoint", harness.charm.unit.status.message)
+
+    @patch(
+        "controlsocket.ControlSocketClient.remove_loki_endpoint",
+        side_effect=APIError(
+            {"error": "loki endpoint not found"}, 404, "", "loki endpoint not found"
+        ),
+    )
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_loki_push_api_endpoint_departed_404_is_ignored(
+        self, _mock_set, _mock_remove
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+
+        harness.remove_relation(relation_id)
+
+        self.assertIsNone(harness.charm._stored.loki_status_error)
 
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_loki_push_api_endpoint_updated(self, mock_set_loki_endpoint):

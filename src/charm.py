@@ -9,6 +9,7 @@ import logging
 import secrets
 import urllib.parse
 import yaml
+from unixsocket import APIError
 
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
@@ -68,7 +69,8 @@ class JujuControllerCharm(CharmBase):
             workload_tracing_status_error=None,
             s3_status_error=None,
             s3_status_pending=False,
-            loki_endpoint_applied=False,
+            loki_status_error=None,
+            loki_endpoint_seen=False,
         )
 
         # TODO (manadart 2024-03-05): Get these at need.
@@ -237,6 +239,10 @@ class JujuControllerCharm(CharmBase):
             event.add_status(BlockedStatus(self._stored.s3_status_error))
             has_blocking_status = True
 
+        if self._stored.loki_status_error:
+            event.add_status(BlockedStatus(self._stored.loki_status_error))
+            has_blocking_status = True
+
         if self._stored.s3_status_pending:
             if not has_blocking_status:
                 event.add_status(MaintenanceStatus("applying s3 credentials"))
@@ -250,7 +256,6 @@ class JujuControllerCharm(CharmBase):
         controller_url = self.config['controller-url']
         logger.info('got a new controller-url: %r', controller_url)
         self._update_workload_tracing_config()
-        self._reconcile_loki_endpoint()
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
@@ -683,6 +688,7 @@ class JujuControllerCharm(CharmBase):
 
     def _on_loki_push_api_endpoint_joined(self, _event):
         """Handle new or updated Loki push API endpoint."""
+        self._stored.loki_endpoint_seen = bool(self.model.relations["loki-push-api"])
         self._reconcile_loki_endpoint(report_applying_status=True)
 
     def _on_loki_push_api_endpoint_departed(self, _event):
@@ -695,6 +701,7 @@ class JujuControllerCharm(CharmBase):
             return
 
         logger.info("Loki CA certificate updated from relation id %s", event.relation_id)
+        self._stored.loki_endpoint_seen = True
         self._reconcile_loki_endpoint(report_applying_status=True)
 
     def _on_receive_loki_ca_cert_removed(self, event):
@@ -704,17 +711,22 @@ class JujuControllerCharm(CharmBase):
     def _current_loki_endpoint(self) -> Optional[dict]:
         endpoints = self._loki_consumer.loki_endpoints
         if not endpoints:
+            self._stored.loki_status_error = None
             return None
         endpoint = endpoints[0]["url"]
         ca_cert = self._current_ca_cert(self.loki_certificate_transfer)
         insecure_skip_verify = self.config["loki-insecure-skip-verify"]
 
-        if endpoint.startswith("https://") and not ca_cert and not insecure_skip_verify:
-            self.unit.status = BlockedStatus(
-                "loki endpoint is https but no CA cert is available"
+        if self._endpoint_requires_ca_cert(endpoint) and (
+            not ca_cert and not insecure_skip_verify
+        ):
+            self._stored.loki_status_error = (
+                "loki endpoint requires a CA cert, but none is available"
             )
+            self.unit.status = BlockedStatus(self._stored.loki_status_error)
             return None
 
+        self._stored.loki_status_error = None
         return {
             "url": endpoint,
             "ca_cert": ca_cert,
@@ -730,23 +742,37 @@ class JujuControllerCharm(CharmBase):
             try:
                 logger.info("applying Loki push API endpoint")
                 self._control_socket.set_loki_endpoint(endpoint)
-                self._stored.loki_endpoint_applied = True
+                self._stored.loki_status_error = None
                 if report_applying_status:
                     self.unit.status = MaintenanceStatus("applying loki endpoint")
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("failed to apply Loki endpoint: %s", exc)
-                self.unit.status = BlockedStatus("failed to apply loki endpoint")
+                self._stored.loki_status_error = "failed to apply loki endpoint"
+                self.unit.status = BlockedStatus(self._stored.loki_status_error)
             return
 
-        if not self._stored.loki_endpoint_applied:
+        if self._stored.loki_status_error:
+            return
+
+        if not self._stored.loki_endpoint_seen:
             return
 
         try:
             self._control_socket.remove_loki_endpoint()
-            self._stored.loki_endpoint_applied = False
+            self._stored.loki_status_error = None
+            self._stored.loki_endpoint_seen = False
+        except APIError as exc:
+            if exc.code == 404:
+                self._stored.loki_status_error = None
+                self._stored.loki_endpoint_seen = False
+                return
+            logger.error("failed to remove Loki endpoint: %s", exc)
+            self._stored.loki_status_error = "failed to remove loki endpoint"
+            self.unit.status = BlockedStatus(self._stored.loki_status_error)
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to remove Loki endpoint: %s", exc)
-            self.unit.status = BlockedStatus("failed to remove loki endpoint")
+            self._stored.loki_status_error = "failed to remove loki endpoint"
+            self.unit.status = BlockedStatus(self._stored.loki_status_error)
 
 
 def metrics_username(relation: Relation) -> str:
