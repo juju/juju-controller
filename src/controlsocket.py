@@ -99,3 +99,18 @@ class ControlSocketClient(unixsocket.SocketClient):
             path='/s3-credentials',
         )
         logger.debug('result of remove_s3_credentials request: %r', resp)
+
+    def set_loki_endpoint(self, endpoint: dict):
+        resp = self.json_request(
+            method='POST',
+            path='/loki-endpoint',
+            body=endpoint,
+        )
+        logger.debug('result of set_loki_endpoint request: %r', resp)
+
+    def remove_loki_endpoint(self):
+        resp = self.json_request(
+            method='DELETE',
+            path='/loki-endpoint',
+        )
+        logger.debug('result of remove_loki_endpoint request: %r', resp)
