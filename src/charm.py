@@ -731,6 +731,7 @@ class JujuControllerCharm(CharmBase):
             "url": endpoint,
             "ca_cert": ca_cert,
             "insecure_skip_verify": insecure_skip_verify,
+            "org_id": self.config["loki-org-id"],
         }
 
     def _reconcile_loki_endpoint(self, report_applying_status: bool = False):

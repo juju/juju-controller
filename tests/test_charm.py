@@ -504,6 +504,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -526,6 +527,63 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": True,
+                "org_id": "",
+            }
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
+    def test_config_changed_updates_loki_org_id(
+        self,
+        mock_set_loki_endpoint,
+        mock_set_charm_tracing_config,
+        mock_set_workload_tracing_config,
+        *_,
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_charm_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.reset_mock()
+        mock_set_loki_endpoint.reset_mock()
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+        harness.update_relation_data(
+            relation_id,
+            "loki/0",
+            {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+        )
+        mock_set_loki_endpoint.assert_called_once_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+                "org_id": "",
+            }
+        )
+
+        mock_set_loki_endpoint.reset_mock()
+        harness.update_config({"loki-org-id": "12345"})
+
+        mock_set_charm_tracing_config.assert_not_called()
+        mock_set_workload_tracing_config.assert_called_once_with(
+            grpc_endpoint=None,
+            http_endpoint=None,
+            ca_cert=None,
+            open_telemetry_stack_traces=False,
+            open_telemetry_sample_ratio=0.1,
+            open_telemetry_tail_sampling_threshold="1ms",
+            insecure_skip_verify=False,
+        )
+        self.assertEqual(mock_set_loki_endpoint.call_count, 1)
+        mock_set_loki_endpoint.assert_called_with(
+            {
+                "url": "http://loki:3100/loki/api/v1/push",
+                "ca_cert": None,
+                "insecure_skip_verify": False,
+                "org_id": "12345",
             }
         )
 
@@ -1668,6 +1726,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
@@ -1710,6 +1769,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -1733,6 +1793,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -1834,6 +1895,7 @@ class TestCharm(unittest.TestCase):
                 "url": "https://loki:3100/loki/api/v1/push",
                 "ca_cert": cert,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
@@ -1862,6 +1924,7 @@ class TestCharm(unittest.TestCase):
                 "url": "https://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": True,
+                "org_id": "",
             }
         )
 
@@ -2011,6 +2074,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -2026,6 +2090,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki-new:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
         self.assertEqual(mock_set_loki_endpoint.call_count, 2)
@@ -2061,6 +2126,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": "\n".join([cert_a, cert_b]),
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -2104,6 +2170,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": cert,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
@@ -2115,6 +2182,7 @@ class TestCharm(unittest.TestCase):
                 "url": "http://loki:3100/loki/api/v1/push",
                 "ca_cert": None,
                 "insecure_skip_verify": False,
+                "org_id": "",
             }
         )
 
