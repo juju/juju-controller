@@ -35,17 +35,9 @@ parts:
   charm:
     plugin: uv
     source: .
-    build-packages: [git, rustc, cargo]
+    build-packages: [git]
     build-snaps: [astral-uv]
 
 platforms:
   ubuntu@24.04:riscv64:
   ubuntu@26.04:riscv64:
-
-charm-libs:
-  - lib: prometheus_k8s.prometheus_scrape
-    version: "0"
-  - lib: tempo_coordinator_k8s.tracing
-    version: "0"
-  - lib: certificate_transfer_interface.certificate_transfer
-    version: "1"

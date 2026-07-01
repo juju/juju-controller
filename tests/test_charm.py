@@ -8,15 +8,6 @@ import unittest
 
 import yaml
 
-from charms.certificate_transfer_interface.v1.certificate_transfer import (
-    ProviderApplicationData,
-)
-from charms.tempo_coordinator_k8s.v0.tracing import (
-    ProtocolType,
-    Receiver,
-    TracingProviderAppData,
-    TransportProtocolType,
-)
 from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus
 from ops.testing import Harness
@@ -53,22 +44,25 @@ cacert: fake
 
 
 def tracing_provider_data():
-    return TracingProviderAppData(
-        receivers=[
-            Receiver(
-                protocol=ProtocolType(name="otlp_grpc", type=TransportProtocolType.grpc),
-                url="tempo-grpc:4317",
-            ),
-            Receiver(
-                protocol=ProtocolType(name="otlp_http", type=TransportProtocolType.http),
-                url="http://tempo-http:4318",
-            ),
-        ]
-    ).dump()
+    return {
+        "receivers": json.dumps([
+            {
+                "protocol": {"name": "otlp_grpc", "type": "grpc"},
+                "url": "tempo-grpc:4317",
+            },
+            {
+                "protocol": {"name": "otlp_http", "type": "http"},
+                "url": "http://tempo-http:4318",
+            },
+        ])
+    }
 
 
 def certificate_provider_data(certificates):
-    return ProviderApplicationData(certificates=certificates).dump()
+    return {
+        "certificates": json.dumps(sorted(certificates)),
+        "version": json.dumps(1),
+    }
 
 
 class TestCharm(unittest.TestCase):
@@ -112,21 +106,22 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["port"], '17070')
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    @patch("charm.MetricsEndpointProvider", autospec=True)
     @patch("charm.generate_password", new=lambda: "passwd")
     @patch("controlsocket.ControlSocketClient.add_metrics_user")
     @patch("controlsocket.ControlSocketClient.remove_metrics_user")
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
-                                       mock_metrics_provider, _):
+                                       _):
         harness = self.harness
+        harness.set_leader(True)
         harness.add_network(address="192.168.1.17", endpoint="metrics-endpoint")
 
         relation_id = harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         mock_add_user.assert_called_once_with(f'juju-metrics-r{relation_id}', 'passwd')
 
-        mock_metrics_provider.assert_called_once_with(
-            harness.charm,
-            jobs=[{
+        app_data = harness.get_relation_data(relation_id, "juju-controller")
+        self.assertEqual(
+            json.loads(app_data["scrape_jobs"]),
+            [{
                 "metrics_path": "/introspection/metrics",
                 "scheme": "https",
                 "static_configs": [{"targets": ["*:17070"]}],
@@ -140,7 +135,15 @@ class TestCharm(unittest.TestCase):
                 },
             }],
         )
-        mock_metrics_provider.return_value.set_scrape_job_spec.assert_called_once()
+        self.assertEqual(json.loads(app_data["alert_rules"]), {})
+        self.assertEqual(
+            json.loads(app_data["scrape_metadata"])["application"],
+            "juju-controller",
+        )
+
+        unit_data = harness.get_relation_data(relation_id, "juju-controller/0")
+        self.assertEqual(unit_data["prometheus_scrape_unit_address"], "192.168.1.17")
+        self.assertEqual(unit_data["prometheus_scrape_unit_name"], "juju-controller/0")
 
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
@@ -174,9 +177,11 @@ class TestCharm(unittest.TestCase):
     ):
         harness = self.harness
 
-        event = type("Event", (), {"relation": object()})()
-        with patch.object(harness.charm.tracing_requirer, "is_ready", return_value=False):
-            harness.charm._on_tracing_relation_changed(event)
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+        harness.update_relation_data(
+            relation_id, "tempo-coordinator", {"receivers": "not-json"}
+        )
 
         self.assertEqual(harness.charm._stored.tracing_endpoints, {})
         mock_set_tracing_config.assert_not_called()
@@ -480,6 +485,7 @@ class mockNetwork:
     def __init__(self, addresses):
         self.ingress_addresses = [ipaddress.ip_address(addr) for addr in addresses]
         self.ingress_address = addresses[0]
+        self.bind_address = ipaddress.ip_address(addresses[0])
 
 
 class mockBinding:
