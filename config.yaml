@@ -30,3 +30,11 @@ options:
     default: false
     description: Whether workload tracing should skip TLS certificate verification.
     type: boolean
+  loki-insecure-skip-verify:
+    default: false
+    description: Whether Loki should skip TLS certificate verification.
+    type: boolean
+  loki-org-id:
+    default: ""
+    description: The Loki organization ID to use when pushing logs.
+    type: string
