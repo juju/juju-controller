@@ -553,16 +553,16 @@ class JujuControllerCharm(CharmBase):
     def _validate_open_telemetry_sample_ratio(self, sample_ratio: float):
         if sample_ratio < 0 or sample_ratio > 1:
             raise ValueError(
-                "invalid open-telemetry-sample-ratio: must be between 0 and 1"
+                "invalid workload-tracing-sample-ratio: must be between 0 and 1"
             )
 
     def _current_open_telemetry_config(self) -> Tuple[bool, float, str, bool]:
-        sample_ratio = float(self.config["open-telemetry-sample-ratio"])
+        sample_ratio = float(self.config["workload-tracing-sample-ratio"])
         self._validate_open_telemetry_sample_ratio(sample_ratio)
         return (
-            self.config["open-telemetry-stack-traces"],
+            self.config["workload-tracing-stack-traces"],
             sample_ratio,
-            self.config["open-telemetry-tail-sampling-threshold"],
+            self.config["workload-tracing-tail-sampling-threshold"],
             self.config["workload-tracing-insecure-skip-verify"],
         )
 
@@ -612,9 +612,9 @@ class JujuControllerCharm(CharmBase):
                 insecure_skip_verify,
             ) = self._current_open_telemetry_config()
             open_telemetry_config = {
-                "open_telemetry_stack_traces": open_telemetry_stack_traces,
-                "open_telemetry_sample_ratio": open_telemetry_sample_ratio,
-                "open_telemetry_tail_sampling_threshold": open_telemetry_tail_sampling_threshold,
+                "stack_traces": open_telemetry_stack_traces,
+                "sample_ratio": open_telemetry_sample_ratio,
+                "tail_sampling_threshold": open_telemetry_tail_sampling_threshold,
                 "insecure_skip_verify": insecure_skip_verify,
             }
         except ValueError as exc:
