@@ -456,9 +456,9 @@ class TestCharm(unittest.TestCase):
 
         harness.update_config(
             {
-                "open-telemetry-stack-traces": True,
-                "open-telemetry-sample-ratio": 0.5,
-                "open-telemetry-tail-sampling-threshold": "250ms",
+                "workload-tracing-stack-traces": True,
+                "workload-tracing-sample-ratio": 0.5,
+                "workload-tracing-tail-sampling-threshold": "250ms",
                 "workload-tracing-insecure-skip-verify": True,
             }
         )
@@ -469,9 +469,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=True,
-            open_telemetry_sample_ratio=0.5,
-            open_telemetry_tail_sampling_threshold="250ms",
+            stack_traces=True,
+            sample_ratio=0.5,
+            tail_sampling_threshold="250ms",
             insecure_skip_verify=True,
         )
 
@@ -516,9 +516,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         self.assertEqual(mock_set_loki_endpoint.call_count, 1)
@@ -572,9 +572,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         self.assertEqual(mock_set_loki_endpoint.call_count, 1)
@@ -601,7 +601,7 @@ class TestCharm(unittest.TestCase):
         mock_set_charm_tracing_config.reset_mock()
         mock_set_workload_tracing_config.reset_mock()
 
-        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        harness.update_config({"workload-tracing-sample-ratio": 1.1})
 
         mock_set_charm_tracing_config.assert_not_called()
         mock_set_workload_tracing_config.assert_not_called()
@@ -610,7 +610,7 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
-            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+            "invalid workload-tracing-sample-ratio: must be between 0 and 1",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -627,25 +627,25 @@ class TestCharm(unittest.TestCase):
         mock_set_charm_tracing_config.reset_mock()
         mock_set_workload_tracing_config.reset_mock()
 
-        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        harness.update_config({"workload-tracing-sample-ratio": 1.1})
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertEqual(
             harness.charm.unit.status.message,
-            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+            "invalid workload-tracing-sample-ratio: must be between 0 and 1",
         )
         mock_set_charm_tracing_config.assert_not_called()
 
-        harness.update_config({"open-telemetry-sample-ratio": 0.25})
+        harness.update_config({"workload-tracing-sample-ratio": 0.25})
 
         mock_set_charm_tracing_config.assert_not_called()
         mock_set_workload_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.25,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.25,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
@@ -669,15 +669,15 @@ class TestCharm(unittest.TestCase):
         _mock_set_charm_tracing_config.reset_mock()
         mock_set_workload_tracing_config.reset_mock()
 
-        harness.update_config({"open-telemetry-sample-ratio": 0.5})
+        harness.update_config({"workload-tracing-sample-ratio": 0.5})
 
         mock_set_workload_tracing_config.assert_called_once_with(
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.5,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.5,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
@@ -706,7 +706,7 @@ class TestCharm(unittest.TestCase):
             SocketConnectionError("could not connect to socket"),
             None,
         ]
-        harness.update_config({"open-telemetry-sample-ratio": 0.5})
+        harness.update_config({"workload-tracing-sample-ratio": 0.5})
 
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
@@ -715,7 +715,7 @@ class TestCharm(unittest.TestCase):
             "failed to set workload tracing config",
         )
 
-        harness.update_config({"open-telemetry-stack-traces": True})
+        harness.update_config({"workload-tracing-stack-traces": True})
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
@@ -784,9 +784,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -807,9 +807,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -841,9 +841,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -928,9 +928,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="https://tempo-http:4318",
             ca_cert=cert,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
@@ -964,9 +964,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="https://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=True,
         )
 
@@ -1064,9 +1064,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -1077,9 +1077,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -1108,13 +1108,13 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
-        harness.update_config({"open-telemetry-sample-ratio": 1.1})
+        harness.update_config({"workload-tracing-sample-ratio": 1.1})
         self.assertEqual(mock_set_workload_tracing_config.call_count, 1)
 
         harness.remove_relation(relation_id)
@@ -1130,7 +1130,7 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
-            "invalid open-telemetry-sample-ratio: must be between 0 and 1",
+            "invalid workload-tracing-sample-ratio: must be between 0 and 1",
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -1158,9 +1158,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint="tempo-grpc:4317",
             http_endpoint="http://tempo-http:4318",
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         mock_set_charm_tracing_config.assert_not_called()
@@ -1171,9 +1171,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
         mock_set_charm_tracing_config.assert_not_called()
@@ -1206,9 +1206,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert="\n".join([cert_a, cert_b]),
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -1249,9 +1249,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=cert,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 
@@ -1262,9 +1262,9 @@ class TestCharm(unittest.TestCase):
             grpc_endpoint=None,
             http_endpoint=None,
             ca_cert=None,
-            open_telemetry_stack_traces=False,
-            open_telemetry_sample_ratio=0.1,
-            open_telemetry_tail_sampling_threshold="1ms",
+            stack_traces=False,
+            sample_ratio=0.1,
+            tail_sampling_threshold="1ms",
             insecure_skip_verify=False,
         )
 

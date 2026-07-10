@@ -124,9 +124,9 @@ class TestClass(unittest.TestCase):
                 r'{"grpc_endpoint": "grpc://trace.example.com:4317", '
                 r'"http_endpoint": "http://trace.example.com:4318", '
                 r'"ca_cert": "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----", '
-                r'"open_telemetry_stack_traces": true, '
-                r'"open_telemetry_sample_ratio": 0.5, '
-                r'"open_telemetry_tail_sampling_threshold": "250ms", '
+                r'"stack_traces": true, '
+                r'"sample_ratio": 0.5, '
+                r'"tail_sampling_threshold": "250ms", '
                 r'"insecure_skip_verify": true}'
             ),
             response=MockResponse(
@@ -139,9 +139,9 @@ class TestClass(unittest.TestCase):
             grpc_endpoint='grpc://trace.example.com:4317',
             http_endpoint='http://trace.example.com:4318',
             ca_cert='-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
-            open_telemetry_stack_traces=True,
-            open_telemetry_sample_ratio=0.5,
-            open_telemetry_tail_sampling_threshold='250ms',
+            stack_traces=True,
+            sample_ratio=0.5,
+            tail_sampling_threshold='250ms',
             insecure_skip_verify=True,
         )
 
