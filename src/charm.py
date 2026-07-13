@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 class JujuControllerCharm(CharmBase):
-    METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
-    CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
+    METRICS_SOCKET_PATH = '/var/snap/jujud/common/sockets/control.socket'
+    CONFIG_SOCKET_PATH = '/var/snap/jujud/common/sockets/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
     AGENT_ID_KEY = 'agent-id'
@@ -470,11 +470,11 @@ class JujuControllerCharm(CharmBase):
 
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
-        api_addresses = self._agent_conf('apiaddresses')
+        api_addresses = self._controller_runtime_config('api-addresses')
         if not api_addresses:
-            raise AgentConfException("agent.conf key 'apiaddresses' missing")
+            raise AgentConfException("runtime.conf key 'api-addresses' missing")
         if not isinstance(api_addresses, List):
-            raise AgentConfException("agent.conf key 'apiaddresses' is not a list")
+            raise AgentConfException("runtime.conf key 'api-addresses' is not a list")
 
         parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
         if not parsed_url.port:
@@ -483,23 +483,30 @@ class JujuControllerCharm(CharmBase):
 
     def ca_cert(self) -> str:
         """Return the controller's CA certificate."""
-        return self._agent_conf('cacert')
+        return self._controller_runtime_config('ca-cert')
 
-    def _agent_conf(self, key: str):
-        """Read a value (by key) from the agent.conf file on disk."""
-        unit_name = self.unit.name.replace('/', '-')
-        agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
+    def _controller_runtime_config(self, key: str):
+        """Read a value (by key) from the runtime.conf file on disk.
 
-        with open(agent_conf_path) as agent_conf_file:
-            agent_conf = yaml.safe_load(agent_conf_file)
-            return agent_conf.get(key)
+        The runtime.conf is read from the snap's current revision symlink
+        (/var/snap/jujud/current). During snap refresh, snapd atomically
+        updates this symlink, so the path may be briefly unavailable or
+        point to a stale directory if the refresh is in progress. This
+        edge case is acceptable for Phase 1 and will be revisited when
+        snap refresh semantics are addressed.
+        """
+        runtime_conf_path = '/var/snap/jujud/current/agents/controller-0/runtime.conf'
+
+        with open(runtime_conf_path) as runtime_conf_file:
+            runtime_conf = yaml.safe_load(runtime_conf_file)
+            return runtime_conf.get(key)
 
     def _controller_config_path(self) -> str:
         """Interrogate the running controller jujud service to determine
         the local controller ID, then use it to construct a config path.
         """
         controller_id = self._controller_agent_id()
-        return f'/var/lib/juju/agents/controller-{controller_id}/controller.conf'
+        return f'/var/snap/jujud/common/agents/controller-{controller_id}/controller.conf'
 
     def _controller_agent_id(self):
         return self._config_change_socket.get_controller_agent_id()
