@@ -1,0 +1,45 @@
+groups:
+  - name: juju-controller-alerts
+    rules:
+      - alert: JujuControllerHighErrorRate
+        expr: |
+          sum(rate({%%juju_topology%%} |= "ERROR" [5m])) by (juju_model, juju_model_uuid, juju_application)
+            /
+          sum(rate({%%juju_topology%%}[5m])) by (juju_model, juju_model_uuid, juju_application)
+            > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Juju controller high error rate
+          description: |
+            More than 5% of Juju controller log lines in the last 10 minutes
+            contain "ERROR". This may indicate operational issues with the
+            controller, such as failed API requests, model errors, or
+            database connectivity problems.
+
+      - alert: JujuControllerFatalError
+        expr: |
+          sum(count_over_time({%%juju_topology%%} |~ "(?i)FATAL|panic" [5m])) by (juju_model, juju_model_uuid, juju_application) > 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: Juju controller fatal error or panic
+          description: |
+            The Juju controller has logged a FATAL error or panic in the last
+            5 minutes. This indicates a critical failure that may require
+            immediate investigation.
+
+      - alert: JujuControllerLogsStopped
+        expr: |
+          sum(count_over_time({%%juju_topology%%}[10m])) by (juju_model, juju_model_uuid, juju_application) == 0
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: Juju controller stopped sending logs
+          description: |
+            No logs have been received from the Juju controller for more
+            than 15 minutes. This may indicate that the controller is down
+            or that logging has been misconfigured.
