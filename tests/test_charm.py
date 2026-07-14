@@ -23,32 +23,32 @@ from ops.testing import Harness
 from unittest.mock import mock_open, patch
 from unixsocket import APIError, ConnectionError as SocketConnectionError
 
-agent_conf = '''
-apiaddresses:
+runtime_conf = '''
+api-addresses:
 - localhost:17070
-cacert: fake
+ca-cert: fake
 '''
 
-agent_conf_apiaddresses_missing = '''
-cacert: fake
+runtime_conf_api_addresses_missing = '''
+ca-cert: fake
 '''
 
-agent_conf_apiaddresses_not_list = '''
-apiaddresses:
+runtime_conf_api_addresses_not_list = '''
+api-addresses:
   foo: bar
-cacert: fake
+ca-cert: fake
 '''
 
-agent_conf_ipv4 = '''
-apiaddresses:
+runtime_conf_ipv4 = '''
+api-addresses:
 - "127.0.0.1:17070"
-cacert: fake
+ca-cert: fake
 '''
 
-agent_conf_ipv6 = '''
-apiaddresses:
+runtime_conf_ipv6 = '''
+api-addresses:
 - "[::1]:17070"
-cacert: fake
+ca-cert: fake
 '''
 
 
@@ -104,7 +104,7 @@ class TestCharm(unittest.TestCase):
         "JUJU_UNIT_NAME": "controller/0"
     })
     @patch("ops.model.Model.get_binding")
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     def test_website_relation_joined(self, _, binding):
         harness = self.harness
         binding.return_value = mockBinding(["192.168.1.17"])
@@ -118,7 +118,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["private-address"], "192.168.1.17")
         self.assertEqual(data["port"], '17070')
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("charm.MetricsEndpointProvider", autospec=True)
     @patch("charm.generate_password", new=lambda: "passwd")
     @patch("controlsocket.ControlSocketClient.add_metrics_user")
@@ -152,7 +152,7 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_updates_endpoints(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -172,7 +172,7 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_cleared_on_leader_elected_without_relations(
         self, mock_set_tracing_config, *_
@@ -187,7 +187,7 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_replayed_on_leader_elected(
         self, mock_set_tracing_config, *_
@@ -211,7 +211,7 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_change_ignores_not_ready(
         self, mock_set_tracing_config, *_
@@ -224,7 +224,7 @@ class TestCharm(unittest.TestCase):
 
         mock_set_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_https_endpoint_waits_for_ca_cert(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -250,7 +250,7 @@ class TestCharm(unittest.TestCase):
             "charm tracing endpoint requires a CA cert, but none is available",
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_https_endpoint_applies_when_ca_cert_arrives(
         self, mock_set_tracing_config, *_
@@ -288,7 +288,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_update_sets_blocked_on_socket_error(
         self, mock_set_tracing_config, *_
@@ -314,7 +314,7 @@ class TestCharm(unittest.TestCase):
             harness.charm.unit.status.message, "failed to set charm tracing config"
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_status_error_clears_after_success(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -343,7 +343,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_tracing_relation_removed_clears_endpoints(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -371,7 +371,7 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_receive_ca_cert_updates_tracing_config(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -395,7 +395,7 @@ class TestCharm(unittest.TestCase):
             ca_cert="\n".join([cert_a, cert_b]),
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_receive_ca_cert_update_ignores_empty_cert_list(
         self, mock_set_tracing_config, *_
@@ -407,7 +407,7 @@ class TestCharm(unittest.TestCase):
 
         mock_set_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_receive_ca_cert_removed_clears_tracing_ca_cert(self, mock_set_tracing_config, *_):
         harness = self.harness
@@ -438,7 +438,7 @@ class TestCharm(unittest.TestCase):
             ca_cert=None,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -475,7 +475,7 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=True,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -531,7 +531,7 @@ class TestCharm(unittest.TestCase):
             }
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -587,7 +587,7 @@ class TestCharm(unittest.TestCase):
             }
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_config_changed_invalid_open_telemetry_sample_ratio_sets_blocked(
@@ -613,7 +613,7 @@ class TestCharm(unittest.TestCase):
             "invalid workload-tracing-sample-ratio: must be between 0 and 1",
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_config_changed_invalid_open_telemetry_sample_ratio_recovers_on_valid_update(
@@ -652,7 +652,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch(
         "controlsocket.ControlSocketClient.set_workload_tracing_config",
         side_effect=SocketConnectionError("could not connect to socket"),
@@ -688,7 +688,7 @@ class TestCharm(unittest.TestCase):
             "failed to set workload tracing config",
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     def test_config_changed_socket_error_status_recovers_after_success(
@@ -721,7 +721,7 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
         mock_set_charm_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_charm_tracing_set_and_remove_do_not_change_workload_tracing(
@@ -758,7 +758,7 @@ class TestCharm(unittest.TestCase):
         )
         mock_set_workload_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_updates_endpoints(
@@ -790,7 +790,7 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=False,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_cleared_on_leader_elected_without_relations(
@@ -813,7 +813,7 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=False,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_replayed_on_leader_elected(
@@ -861,7 +861,7 @@ class TestCharm(unittest.TestCase):
 
         mock_set_workload_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_https_endpoint_waits_for_ca_cert(
@@ -892,7 +892,7 @@ class TestCharm(unittest.TestCase):
             "workload tracing endpoint requires a CA cert, but none is available",
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_https_endpoint_applies_when_ca_cert_arrives(
@@ -937,7 +937,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_https_endpoint_applies_with_insecure_skip_verify(
@@ -970,7 +970,7 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=True,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_update_sets_blocked_on_socket_error(
@@ -1003,7 +1003,7 @@ class TestCharm(unittest.TestCase):
             harness.charm.unit.status.message, "failed to set workload tracing config"
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_status_error_clears_after_success(
@@ -1039,7 +1039,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_removed_clears_endpoints(
@@ -1083,7 +1083,7 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=False,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_relation_removed_clears_endpoints_with_invalid_config(
@@ -1133,7 +1133,7 @@ class TestCharm(unittest.TestCase):
             "invalid workload-tracing-sample-ratio: must be between 0 and 1",
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_workload_tracing_set_and_remove_do_not_change_charm_tracing(
@@ -1178,7 +1178,7 @@ class TestCharm(unittest.TestCase):
         )
         mock_set_charm_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_receive_workload_ca_cert_updates_tracing_config(
@@ -1223,7 +1223,7 @@ class TestCharm(unittest.TestCase):
 
         mock_set_workload_tracing_config.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
     def test_receive_workload_ca_cert_removed_clears_tracing_ca_cert(
@@ -1268,23 +1268,23 @@ class TestCharm(unittest.TestCase):
             insecure_skip_verify=False,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_api_addresses_missing)
     def test_apiaddresses_missing(self, _):
         harness = self.harness
 
-        with self.assertRaisesRegex(AgentConfException, "agent.conf key 'apiaddresses' missing"):
+        with self.assertRaisesRegex(AgentConfException, "runtime.conf key 'api-addresses' missing"):
             harness.charm.api_port()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_not_list)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_api_addresses_not_list)
     def test_apiaddresses_not_list(self, _):
         harness = self.harness
 
         with self.assertRaisesRegex(
-            AgentConfException, "agent.conf key 'apiaddresses' is not a list"
+            AgentConfException, "runtime.conf key 'api-addresses' is not a list"
         ):
             harness.charm.api_port()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_missing)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_api_addresses_missing)
     @patch("controlsocket.ControlSocketClient.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
         harness = self.harness
@@ -1296,19 +1296,19 @@ class TestCharm(unittest.TestCase):
             harness.charm.unit.status,
             BlockedStatus(
                 "cannot read controller API port from agent configuration: "
-                "agent.conf key 'apiaddresses' missing"
+                "runtime.conf key 'api-addresses' missing"
             )
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv4)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_ipv4)
     def test_apiaddresses_ipv4(self, _):
         self.assertEqual(self.harness.charm.api_port(), 17070)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_ipv6)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_ipv6)
     def test_apiaddresses_ipv6(self, _):
         self.assertEqual(self.harness.charm.api_port(), 17070)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
@@ -1348,7 +1348,7 @@ class TestCharm(unittest.TestCase):
         harness.evaluate_status()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
@@ -1386,7 +1386,7 @@ class TestCharm(unittest.TestCase):
         self.harness.update_relation_data(
             relation_id, harness.charm.app.name, {'db-bind-addresses': json.dumps(bound)})
 
-        file_path = '/var/lib/juju/agents/controller-0/controller.conf'
+        file_path = '/var/snap/jujud/common/agents/controller-0/controller.conf'
         self.assertEqual(mock_open.call_count, 2)
 
         # First call to read out the YAML
@@ -1409,7 +1409,7 @@ class TestCharm(unittest.TestCase):
         # socket..
         mock_reload_config.assert_called_once()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
     @patch("ops.model.Model.get_binding")
     @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
@@ -1863,7 +1863,7 @@ class TestCharm(unittest.TestCase):
             harness.charm.unit.status.message,
         )
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_loki_push_api_https_endpoint_applies_when_ca_cert_arrives(
         self, mock_set_loki_endpoint, *_
@@ -2095,7 +2095,7 @@ class TestCharm(unittest.TestCase):
         )
         self.assertEqual(mock_set_loki_endpoint.call_count, 2)
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_receive_loki_ca_cert_updates_loki_config(self, mock_set_loki_endpoint, *_):
         harness = self.harness
@@ -2139,7 +2139,7 @@ class TestCharm(unittest.TestCase):
 
         mock_set_loki_endpoint.assert_not_called()
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_receive_loki_ca_cert_removed_clears_loki_ca_cert(
         self, mock_set_loki_endpoint, *_
