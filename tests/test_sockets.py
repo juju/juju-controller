@@ -145,6 +145,52 @@ class TestClass(unittest.TestCase):
             insecure_skip_verify=True,
         )
 
+    def test_add_s3_config_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-credentials',
+            method='POST',
+            body=(
+                r'{"access_key": "ak", '
+                r'"secret_key": "sk", '
+                r'"bucket": "test-bucket", '
+                r'"region": "us-east-1", '
+                r'"endpoint": "https://s3.example"}'
+            ),
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"updated s3 config"}'
+            )
+        )
+
+        control_socket.add_s3_config(
+            {
+                'access_key': 'ak',
+                'secret_key': 'sk',
+                'bucket': 'test-bucket',
+                'region': 'us-east-1',
+                'endpoint': 'https://s3.example',
+            }
+        )
+
+    def test_remove_s3_config_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-credentials',
+            method='DELETE',
+            body=None,
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"removed s3 config"}'
+            )
+        )
+
+        control_socket.remove_s3_config()
+
     def test_set_loki_endpoint_success(self):
         mock_opener = MockOpener(self)
         control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)

@@ -197,16 +197,18 @@ class JujuControllerCharm(CharmBase):
         if not access_key or not secret_key:
             return
 
-        credentials = {
+        config = {
             "access_key": access_key,
             "secret_key": secret_key,
+            "bucket": s3_connection_info.get("bucket"),
+            "region": s3_connection_info.get("region"),
             "endpoint": s3_connection_info.get("endpoint"),
         }
         self._stored.s3_status_pending = True
 
         try:
             logger.info("reapplying S3 credentials after leadership change")
-            self._control_socket.add_s3_credentials(credentials)
+            self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to reapply S3 credentials after leadership change: %s", exc)
@@ -652,12 +654,11 @@ class JujuControllerCharm(CharmBase):
 
     def _on_s3_credentials_changed(self, event: CredentialsChangedEvent):
         """Handle new or updated S3 credentials."""
-        # S3Requirer always negotiates a bucket, but right now each controller
-        # uses its own Juju-managed bucket. We only need auth and endpoint
-        # until we support shared or externally managed buckets.
-        credentials = {
+        config = {
             'access_key': event.access_key,
             'secret_key': event.secret_key,
+            'bucket': event.bucket,
+            'region': event.region,
             'endpoint': event.endpoint,
         }
 
@@ -667,7 +668,7 @@ class JujuControllerCharm(CharmBase):
         self._stored.s3_status_pending = True
         try:
             logger.info("applying new S3 credentials")
-            self._control_socket.add_s3_credentials(credentials)
+            self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to apply S3 credentials: %s", exc)
@@ -680,7 +681,7 @@ class JujuControllerCharm(CharmBase):
             return
 
         try:
-            self._control_socket.remove_s3_credentials()
+            self._control_socket.remove_s3_config()
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to remove S3 credentials: %s", exc)
