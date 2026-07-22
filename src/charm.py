@@ -148,7 +148,7 @@ class JujuControllerCharm(CharmBase):
             self._on_receive_workload_ca_cert_removed,
         )
         # S3 credential events are observed to maintain the current S3
-        # credentials in the charm's stored state, and to apply them via the
+        # config in the charm's stored state, and to apply it via the
         # control socket when they change.
         self.framework.observe(
             self._s3.on.credentials_changed, self._on_s3_credentials_changed)
@@ -188,32 +188,19 @@ class JujuControllerCharm(CharmBase):
         self._update_workload_tracing_config()
         self._reconcile_loki_endpoint()
 
-        # Read current relation data rather than relying on locally cached
-        # state. This avoids replaying stale credentials if this unit becomes
-        # leader before processing delayed relation events.
-        s3_connection_info = self._s3.get_s3_connection_info()
-        access_key = s3_connection_info.get("access-key")
-        secret_key = s3_connection_info.get("secret-key")
-        if not access_key or not secret_key:
+        config = self._current_s3_config()
+        if config is None:
             return
-
-        config = {
-            "access_key": access_key,
-            "secret_key": secret_key,
-            "bucket": s3_connection_info.get("bucket"),
-            "region": s3_connection_info.get("region"),
-            "endpoint": s3_connection_info.get("endpoint"),
-        }
         self._stored.s3_status_pending = True
 
         try:
-            logger.info("reapplying S3 credentials after leadership change")
+            logger.info("reapplying S3 config after leadership change")
             self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to reapply S3 credentials after leadership change: %s", exc)
+            logger.error("failed to reapply S3 config after leadership change: %s", exc)
             self._stored.s3_status_pending = False
-            self._stored.s3_status_error = "failed to reapply s3 credentials"
+            self._stored.s3_status_error = "failed to reapply s3 config"
 
     def _on_collect_status(self, event: CollectStatusEvent):
         has_blocking_status = False
@@ -247,7 +234,7 @@ class JujuControllerCharm(CharmBase):
 
         if self._stored.s3_status_pending:
             if not has_blocking_status:
-                event.add_status(MaintenanceStatus("applying s3 credentials"))
+                event.add_status(MaintenanceStatus("applying s3 config"))
             self._stored.s3_status_pending = False
             return
 
@@ -568,6 +555,26 @@ class JujuControllerCharm(CharmBase):
             self.config["workload-tracing-insecure-skip-verify"],
         )
 
+    def _current_s3_config(self):
+        # Read current relation data rather than relying on locally cached
+        # state. This avoids replaying stale config if this unit becomes leader
+        # before processing delayed relation events.
+        s3_connection_info = self._s3.get_s3_connection_info()
+        access_key = s3_connection_info.get("access-key")
+        secret_key = s3_connection_info.get("secret-key")
+        if not access_key or not secret_key:
+            return None
+
+        # Juju's current socket path is still credentials-specific, but the
+        # payload is full S3 config. Optional values may be explicit nulls.
+        return {
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "bucket": s3_connection_info.get("bucket"),
+            "region": s3_connection_info.get("region"),
+            "endpoint": s3_connection_info.get("endpoint"),
+        }
+
     def _update_charm_tracing_config(self):
         """Update charm configuration with current tracing endpoint and CA cert information."""
         if not self.unit.is_leader():
@@ -652,31 +659,27 @@ class JujuControllerCharm(CharmBase):
             logger.error("failed to set workload tracing config: %s", exc)
             self._stored.workload_tracing_status_error = "failed to set workload tracing config"
 
-    def _on_s3_credentials_changed(self, event: CredentialsChangedEvent):
-        """Handle new or updated S3 credentials."""
-        config = {
-            'access_key': event.access_key,
-            'secret_key': event.secret_key,
-            'bucket': event.bucket,
-            'region': event.region,
-            'endpoint': event.endpoint,
-        }
+    def _on_s3_credentials_changed(self, _event: CredentialsChangedEvent):
+        """Handle new or updated S3 config."""
+        config = self._current_s3_config()
+        if config is None:
+            return
 
         if not self.unit.is_leader():
             return
 
         self._stored.s3_status_pending = True
         try:
-            logger.info("applying new S3 credentials")
+            logger.info("applying new S3 config")
             self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to apply S3 credentials: %s", exc)
+            logger.error("failed to apply S3 config: %s", exc)
             self._stored.s3_status_pending = False
-            self._stored.s3_status_error = "failed to apply s3 credentials"
+            self._stored.s3_status_error = "failed to apply s3 config"
 
     def _on_s3_credentials_gone(self, _event):
-        """Handle removal of S3 credentials."""
+        """Handle removal of S3 config."""
         if not self.unit.is_leader():
             return
 
@@ -684,8 +687,8 @@ class JujuControllerCharm(CharmBase):
             self._control_socket.remove_s3_config()
             self._stored.s3_status_error = None
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to remove S3 credentials: %s", exc)
-            self._stored.s3_status_error = "failed to remove s3 credentials"
+            logger.error("failed to remove S3 config: %s", exc)
+            self._stored.s3_status_error = "failed to remove s3 config"
 
     def _on_loki_push_api_endpoint_joined(self, _event):
         """Handle new or updated Loki push API endpoint."""

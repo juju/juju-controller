@@ -88,7 +88,7 @@ class ControlSocketClient(unixsocket.SocketClient):
     def add_s3_config(self, config: dict):
         resp = self.json_request(
             method='POST',
-            path='/s3-credentials',
+            path='/s3-config',
             body=config,
         )
         logger.debug('result of add_s3_config request: %r', resp)
@@ -96,7 +96,7 @@ class ControlSocketClient(unixsocket.SocketClient):
     def remove_s3_config(self):
         resp = self.json_request(
             method='DELETE',
-            path='/s3-credentials',
+            path='/s3-config',
         )
         logger.debug('result of remove_s3_config request: %r', resp)
 
