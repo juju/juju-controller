@@ -85,20 +85,20 @@ class ControlSocketClient(unixsocket.SocketClient):
         )
         logger.debug('result of set_workload_tracing_config request: %r', resp)
 
-    def add_s3_credentials(self, credentials: dict):
+    def add_s3_config(self, config: dict):
         resp = self.json_request(
             method='POST',
-            path='/s3-credentials',
-            body=credentials,
+            path='/s3-config',
+            body=config,
         )
-        logger.debug('result of add_s3_credentials request: %r', resp)
+        logger.debug('result of add_s3_config request: %r', resp)
 
-    def remove_s3_credentials(self):
+    def remove_s3_config(self):
         resp = self.json_request(
             method='DELETE',
-            path='/s3-credentials',
+            path='/s3-config',
         )
-        logger.debug('result of remove_s3_credentials request: %r', resp)
+        logger.debug('result of remove_s3_config request: %r', resp)
 
     def set_loki_endpoint(self, endpoint: dict):
         resp = self.json_request(

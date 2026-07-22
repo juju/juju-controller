@@ -145,6 +145,112 @@ class TestClass(unittest.TestCase):
             insecure_skip_verify=True,
         )
 
+    def test_add_s3_config_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-config',
+            method='POST',
+            body=(
+                r'{"access_key": "ak", '
+                r'"secret_key": "sk", '
+                r'"bucket": "test-bucket", '
+                r'"region": "us-east-1", '
+                r'"endpoint": "https://s3.example"}'
+            ),
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"updated s3 config"}'
+            )
+        )
+
+        control_socket.add_s3_config(
+            {
+                'access_key': 'ak',
+                'secret_key': 'sk',
+                'bucket': 'test-bucket',
+                'region': 'us-east-1',
+                'endpoint': 'https://s3.example',
+            }
+        )
+
+    def test_add_s3_config_fail(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-config',
+            method='POST',
+            body=(
+                r'{"access_key": "ak", '
+                r'"secret_key": "sk", '
+                r'"bucket": "test-bucket", '
+                r'"region": "us-east-1", '
+                r'"endpoint": "https://s3.example"}'
+            ),
+            error=urllib.error.HTTPError(
+                url='http://localhost/s3-config',
+                code=500,
+                msg='',
+                hdrs=None,
+                fp=io.BytesIO(br'{"error":"failed to update s3 config"}'),
+            )
+        )
+
+        with self.assertRaises(APIError) as cm:
+            control_socket.add_s3_config(
+                {
+                    'access_key': 'ak',
+                    'secret_key': 'sk',
+                    'bucket': 'test-bucket',
+                    'region': 'us-east-1',
+                    'endpoint': 'https://s3.example',
+                }
+            )
+        self.assertEqual(cm.exception.body, {'error': 'failed to update s3 config'})
+        self.assertEqual(cm.exception.code, 500)
+        self.assertEqual(cm.exception.message, 'failed to update s3 config')
+
+    def test_remove_s3_config_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-config',
+            method='DELETE',
+            body=None,
+            response=MockResponse(
+                headers=MockHeaders(content_type='application/json'),
+                body=r'{"message":"removed s3 config"}'
+            )
+        )
+
+        control_socket.remove_s3_config()
+
+    def test_remove_s3_config_fail(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/s3-config',
+            method='DELETE',
+            body=None,
+            error=urllib.error.HTTPError(
+                url='http://localhost/s3-config',
+                code=404,
+                msg='',
+                hdrs=None,
+                fp=io.BytesIO(br'{"error":"s3 config not found"}'),
+            )
+        )
+
+        with self.assertRaises(APIError) as cm:
+            control_socket.remove_s3_config()
+        self.assertEqual(cm.exception.body, {'error': 's3 config not found'})
+        self.assertEqual(cm.exception.code, 404)
+        self.assertEqual(cm.exception.message, 's3 config not found')
+
     def test_set_loki_endpoint_success(self):
         mock_opener = MockOpener(self)
         control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
