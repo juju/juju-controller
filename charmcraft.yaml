@@ -53,11 +53,3 @@ platforms:
   ubuntu@26.04:s390x:
   ubuntu@26.04:ppc64el:
   ubuntu@26.04:riscv64:
-
-charm-libs:
-  - lib: prometheus_k8s.prometheus_scrape
-    version: "0"
-  - lib: tempo_coordinator_k8s.tracing
-    version: "0"
-  - lib: certificate_transfer_interface.certificate_transfer
-    version: "1"

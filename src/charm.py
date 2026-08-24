@@ -4,24 +4,20 @@
 
 import controlsocket
 import configchangesocket
+import ipaddress
 import json
 import logging
 import secrets
+import socket
 import urllib.parse
 import yaml
 
-from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
-from charms.certificate_transfer_interface.v1.certificate_transfer import (
-    CertificateTransferRequires,
-)
-from ops.charm import CharmBase, CollectStatusEvent
+from ops.charm import CharmBase, CollectStatusEvent, InstallEvent
 from ops.framework import StoredState
-from ops.charm import InstallEvent
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, Relation
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +35,6 @@ class JujuControllerCharm(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
-
-        self.tracing_requirer = TracingEndpointRequirer(
-            self,
-            protocols=["otlp_http", "otlp_grpc"],
-            relation_name='charm-tracing'
-        )
-        self._certificate_transfer = CertificateTransferRequires(
-            self, relationship_name='charm-tracing-ca-cert'
-        )
 
         self._stored.set_default(
             last_bind_addresses=[],
@@ -86,16 +73,21 @@ class JujuControllerCharm(CharmBase):
         self.framework.observe(
             self.on.dbcluster_relation_departed, self._on_dbcluster_relation_departed)
         self.framework.observe(
-            self.tracing_requirer.on.endpoint_changed, self._on_tracing_relation_changed)
+            self.on.charm_tracing_relation_created, self._on_tracing_relation_created)
         self.framework.observe(
-            self.tracing_requirer.on.endpoint_removed, self._on_tracing_relation_removed)
+            self.on.charm_tracing_relation_changed, self._on_tracing_relation_changed)
         self.framework.observe(
-            self._certificate_transfer.on.certificate_set_updated,
-            self._on_receive_ca_cert_updated,
-        )
+            self.on.charm_tracing_relation_broken, self._on_tracing_relation_removed)
         self.framework.observe(
-            self._certificate_transfer.on.certificates_removed, self._on_receive_ca_cert_removed)
-        self._metrics_endpoint = None
+            self.on.charm_tracing_ca_cert_relation_created,
+            self._on_certificate_relation_created)
+        self.framework.observe(
+            self.on.charm_tracing_ca_cert_relation_changed,
+            self._on_certificate_relation_changed)
+        self.framework.observe(
+            self.on.charm_tracing_ca_cert_relation_broken,
+            self._on_receive_ca_cert_removed)
+        self.framework.observe(self.on.update_status, self._on_metrics_refresh)
 
     def _on_install(self, event: InstallEvent):
         """Ensure that the controller configuration file exists."""
@@ -200,16 +192,61 @@ class JujuControllerCharm(CharmBase):
         jobs = self._metrics_jobs(username, password)
         if jobs is None:
             return
-        if self._metrics_endpoint is None:
-            self._metrics_endpoint = MetricsEndpointProvider(self, jobs=jobs)
-            self._metrics_endpoint.set_scrape_job_spec()
-        else:
-            self._metrics_endpoint.update_scrape_job_spec(jobs)
+        self._set_metrics_scrape_data(
+            self.model.relations["metrics-endpoint"], jobs=jobs)
 
     def _configure_metrics_as_unit(self):
-        if self._metrics_endpoint is None:
-            self._metrics_endpoint = MetricsEndpointProvider(self, jobs=[])
-        self._metrics_endpoint.set_scrape_job_spec()
+        self._set_metrics_scrape_data(
+            self.model.relations["metrics-endpoint"], jobs=None)
+
+    def _set_metrics_scrape_data(self, relations, jobs: Optional[List[dict]]):
+        """Publish the prometheus_scrape relation data without the COSL-backed library."""
+        for relation in relations:
+            address, fqdn = self._metrics_unit_address(relation)
+            relation.data[self.unit].update({
+                "prometheus_scrape_unit_address": address,
+                "prometheus_scrape_unit_path": "",
+                "prometheus_scrape_unit_name": self.unit.name,
+                "prometheus_scrape_unit_fqdn": fqdn,
+            })
+
+        if not self.unit.is_leader() or jobs is None:
+            return
+
+        metadata = json.dumps(self._prometheus_scrape_metadata(), sort_keys=True)
+        scrape_jobs = json.dumps(jobs, sort_keys=True)
+        for relation in relations:
+            relation.data[self.app].update({
+                "scrape_metadata": metadata,
+                "scrape_jobs": scrape_jobs,
+                "alert_rules": json.dumps({}),
+            })
+
+    def _metrics_unit_address(self, relation: Relation):
+        binding = self.model.get_binding(relation)
+        network = getattr(binding, "network", None)
+        address = getattr(network, "bind_address", None)
+        if address and self._is_valid_address(str(address)):
+            return str(address), socket.getfqdn()
+
+        fqdn = socket.getfqdn()
+        return fqdn, fqdn
+
+    def _is_valid_address(self, address: str) -> bool:
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        return True
+
+    def _prometheus_scrape_metadata(self) -> dict:
+        return {
+            "model": self.model.name,
+            "model_uuid": str(self.model.uuid),
+            "application": self.app.name,
+            "unit": self.unit.name,
+            "charm_name": self.meta.name,
+        }
 
     def _remove_metrics_user(self, username):
         try:
@@ -230,9 +267,9 @@ class JujuControllerCharm(CharmBase):
     def _reconcile_metrics_as_leader(self, relations):
         credentials = self._metrics_credentials(relations)
         if credentials is None:
-            # MetricsEndpointProvider publishes one scrape job to every
-            # metrics-endpoint relation, so all Prometheus applications share
-            # one controller user. The oldest relation only seeds its name.
+            # One scrape job is published to every metrics-endpoint relation,
+            # so all Prometheus applications share one controller user. The
+            # oldest relation only seeds its name.
             username = metrics_username(min(relations, key=lambda r: r.id))
             password = generate_password()
         else:
@@ -267,6 +304,18 @@ class JujuControllerCharm(CharmBase):
     def _on_metrics_reconcile(self, _event):
         self._reconcile_metrics(self.model.relations["metrics-endpoint"])
 
+    def _on_metrics_refresh(self, _event):
+        relations = self.model.relations["metrics-endpoint"]
+        if not relations:
+            return
+
+        jobs = None
+        if self.unit.is_leader():
+            credentials = self._metrics_credentials(relations)
+            if credentials:
+                jobs = self._metrics_jobs(*credentials)
+        self._set_metrics_scrape_data(relations, jobs)
+
     def _on_metrics_endpoint_relation_broken(self, event):
         relations = [
             relation for relation in self.model.relations["metrics-endpoint"]
@@ -299,14 +348,22 @@ class JujuControllerCharm(CharmBase):
         relation = event.relation
         self._update_bind_addresses(relation)
 
+    def _on_tracing_relation_created(self, event):
+        self._request_tracing_protocols(event.relation)
+
+    def _request_tracing_protocols(self, relation: Relation):
+        if self.unit.is_leader():
+            relation.data[self.app]["receivers"] = json.dumps(["otlp_http", "otlp_grpc"])
+
     def _on_tracing_relation_changed(self, event):
-        if not self.tracing_requirer.is_ready(event.relation):
+        self._request_tracing_protocols(event.relation)
+        endpoints = self._tracing_endpoints(event.relation)
+        if not endpoints:
+            if self._stored.tracing_endpoints:
+                self._on_tracing_relation_removed(event)
             return
 
-        self._stored.tracing_endpoints = {
-            "otlp_grpc": self.tracing_requirer.get_endpoint("otlp_grpc", event.relation),
-            "otlp_http": self.tracing_requirer.get_endpoint("otlp_http", event.relation),
-        }
+        self._stored.tracing_endpoints = endpoints
         logger.info("tracing endpoints updated: %s", self._stored.tracing_endpoints)
         self._update_charm_tracing_config()
 
@@ -315,18 +372,76 @@ class JujuControllerCharm(CharmBase):
         logger.info("tracing endpoints cleared")
         self._update_charm_tracing_config()
 
-    def _on_receive_ca_cert_updated(self, event):
-        ca_list = event.certificates
+    def _tracing_endpoints(self, relation: Relation) -> Optional[dict]:
+        if not relation.app:
+            return None
+
+        try:
+            receivers = json.loads(relation.data[relation.app].get("receivers", "[]"))
+        except (json.JSONDecodeError, TypeError):
+            logger.info("failed parsing tracing receivers for relation %s", relation.id)
+            return None
+
+        if not isinstance(receivers, list):
+            return None
+
+        endpoints = {}
+        for receiver in receivers:
+            if not isinstance(receiver, dict):
+                continue
+
+            protocol = receiver.get("protocol")
+            name = protocol.get("name") if isinstance(protocol, dict) else protocol
+            url = receiver.get("url")
+            if name in ("otlp_grpc", "otlp_http") and isinstance(url, str):
+                endpoints[name] = url
+
+        return endpoints or None
+
+    def _on_certificate_relation_created(self, event):
+        if self.unit.is_leader():
+            event.relation.data[self.app]["version"] = json.dumps(1)
+
+    def _on_certificate_relation_changed(self, event):
+        ca_list = self._certificates_from_relation(event.relation)
         if not ca_list:
             return
 
         self._stored.ca_cert = '\n'.join(sorted(ca_list))
-        logger.info("CA certificate updated from relation id %s", event.relation_id)
+        logger.info("CA certificate updated from relation id %s", event.relation.id)
         self._update_charm_tracing_config()
+
+    def _certificates_from_relation(self, relation: Relation) -> Set[str]:
+        if relation.app:
+            certificates = self._json_string_set(
+                relation.data[relation.app].get("certificates"))
+            if certificates:
+                return certificates
+
+        for unit in relation.units:
+            certificates = self._json_string_set(relation.data[unit].get("chain"))
+            if certificates:
+                return certificates
+
+        return set()
+
+    def _json_string_set(self, value: Optional[str]) -> Set[str]:
+        if not value:
+            return set()
+
+        try:
+            data = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return set()
+
+        if not isinstance(data, list):
+            return set()
+
+        return {item for item in data if isinstance(item, str)}
 
     def _on_receive_ca_cert_removed(self, event):
         self._stored.ca_cert = None
-        logger.info("CA certificate removed from relation id %s", event.relation_id)
+        logger.info("CA certificate removed from relation id %s", event.relation.id)
         self._update_charm_tracing_config()
 
     def _update_bind_addresses(self, relation):
