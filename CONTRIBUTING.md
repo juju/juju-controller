@@ -2,7 +2,7 @@
 
 You will need to have Python 3, Charmcraft and [uv](https://docs.astral.sh/uv/) installed.
 ```
-sudo snap install charmcraft --classic
+sudo snap install charmcraft --classic --channel latest/stable
 sudo snap install astral-uv --classic
 ```
 

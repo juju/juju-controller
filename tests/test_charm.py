@@ -20,7 +20,7 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
 from charm import JujuControllerCharm, AgentConfException
 from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus
 from ops.testing import Harness
-from unittest.mock import mock_open, patch
+from unittest.mock import Mock, mock_open, patch
 from unixsocket import APIError, ConnectionError as SocketConnectionError
 
 agent_conf = '''
@@ -126,6 +126,7 @@ class TestCharm(unittest.TestCase):
     def test_metrics_endpoint_relation(self, mock_remove_user, mock_add_user,
                                        mock_metrics_provider, _):
         harness = self.harness
+        harness.set_leader(True)
         harness.add_network(address="192.168.1.17", endpoint="metrics-endpoint")
 
         relation_id = harness.add_relation('metrics-endpoint', 'prometheus-k8s')
@@ -151,6 +152,50 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
         mock_remove_user.assert_called_once_with(f'juju-metrics-r{relation_id}')
+
+    @patch("charm.MetricsEndpointProvider", autospec=True)
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    def test_metrics_endpoint_non_leader_only_sets_unit_data(
+            self, mock_add_user, mock_metrics_provider):
+        harness = self.harness
+        harness.add_relation("metrics-endpoint", "prometheus-k8s")
+
+        mock_add_user.assert_not_called()
+        mock_metrics_provider.assert_called_once_with(harness.charm, jobs=[])
+        mock_metrics_provider.return_value.set_scrape_job_spec.assert_called_once()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("charm.MetricsEndpointProvider", autospec=True)
+    @patch("charm.generate_password", new=lambda: "passwd")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    @patch("controlsocket.ControlSocketClient.remove_metrics_user")
+    def test_metrics_relations_share_user(
+            self, mock_remove_user, mock_add_user, _mock_metrics_provider, _):
+        harness = self.harness
+        harness.set_leader(True)
+
+        first_id = harness.add_relation("metrics-endpoint", "prometheus-one")
+        second_id = harness.add_relation("metrics-endpoint", "prometheus-two")
+
+        # The provider publishes one scrape job to all relations, so separate
+        # Prometheus applications intentionally share one controller user.
+        username = f"juju-metrics-r{first_id}"
+        self.assertEqual(
+            harness.get_relation_data(second_id, "juju-controller"),
+            {"metrics-username": username, "metrics-password": "passwd"},
+        )
+        mock_add_user.assert_called_with(username, "passwd")
+        mock_remove_user.assert_any_call(f"juju-metrics-r{second_id}")
+
+        mock_remove_user.reset_mock()
+        harness.remove_relation(first_id)
+        self.assertNotIn(
+            username,
+            [call.args[0] for call in mock_remove_user.call_args_list],
+        )
+        mock_remove_user.reset_mock()
+        harness.remove_relation(second_id)
+        mock_remove_user.assert_any_call(username)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -1288,6 +1333,7 @@ class TestCharm(unittest.TestCase):
     @patch("controlsocket.ControlSocketClient.add_metrics_user")
     def test_apiaddresses_missing_status(self, *_):
         harness = self.harness
+        harness.set_leader(True)
 
         harness.add_relation('metrics-endpoint', 'prometheus-k8s')
         harness.evaluate_status()
@@ -2185,6 +2231,79 @@ class TestCharm(unittest.TestCase):
                 "org_id": "",
             }
         )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
+    @patch("ops.model.Model.get_binding")
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_relation_departed_ignores_departing_self(
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
+        harness = self.harness
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_agent_id.return_value = '0'
+
+        harness.set_leader()
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        harness.add_relation_unit(relation_id, 'juju-controller/1')
+        harness.update_relation_data(
+            relation_id, 'juju-controller/1', {
+                'db-bind-address': '192.168.1.100',
+                'agent-id': '9',
+            })
+
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        expected = {'0': '192.168.1.17', '9': '192.168.1.100'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
+
+        mock_reload_config.reset_mock()
+        event = Mock(
+            relation=harness.model.get_relation('dbcluster', relation_id),
+            departing_unit=harness.charm.unit,
+        )
+        harness.charm._on_dbcluster_relation_departed(event)
+
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
+        mock_reload_config.assert_not_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
+    @patch("ops.model.Model.get_binding")
+    @patch("configchangesocket.ConfigChangeSocketClient.reload_config")
+    def test_dbcluster_leader_elected_reconciles_bind_addresses(
+            self, mock_reload_config, mock_get_binding, mock_get_agent_id, *__):
+        harness = self.harness
+        mock_get_binding.return_value = mockBinding(['192.168.1.17'])
+        mock_get_agent_id.return_value = '1'
+
+        relation_id = harness.add_relation('dbcluster', harness.charm.app.name)
+        harness.add_relation_unit(relation_id, 'juju-controller/2')
+        harness.update_relation_data(
+            relation_id, 'juju-controller/2', {
+                'db-bind-address': '192.168.1.100',
+                'agent-id': '2',
+            })
+        stale = {
+            '0': '192.168.1.16',
+            '1': '192.168.1.17',
+            '2': '192.168.1.100',
+        }
+        harness.update_relation_data(
+            relation_id,
+            harness.charm.app.name,
+            {'db-bind-addresses': json.dumps(stale)},
+        )
+
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), stale)
+
+        mock_reload_config.reset_mock()
+        harness.set_leader()
+
+        app_data = harness.get_relation_data(relation_id, 'juju-controller')
+        expected = {'1': '192.168.1.17', '2': '192.168.1.100'}
+        self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
+        mock_reload_config.assert_called_once()
 
 
 class mockNetwork:

@@ -9,3 +9,4 @@ venv
 /.idea/
 /.vscode/
 .envrc
+/src/juju_controller.egg-info/
