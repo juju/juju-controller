@@ -1683,7 +1683,10 @@ class TestCharm(unittest.TestCase):
         self.harness.update_relation_data(
             relation_id, harness.charm.app.name, {'db-bind-addresses': json.dumps(bound)})
 
-        file_path = '/var/snap/jujud/common/agents/controller-0/controller.conf'
+        file_path = os.path.join(
+            JujuControllerCharm._data_dir(),
+            'agents', 'controller-0', 'controller.conf',
+        )
         self.assertEqual(mock_open.call_count, 2)
 
         # First call to read out the YAML

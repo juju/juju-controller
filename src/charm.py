@@ -6,6 +6,7 @@ import controlsocket
 import configchangesocket
 import json
 import logging
+import os
 import secrets
 import urllib.parse
 import yaml
@@ -36,13 +37,36 @@ logger = logging.getLogger(__name__)
 class JujuControllerCharm(CharmBase):
     METRICS_USERNAME_KEY = "metrics-username"
     METRICS_PASSWORD_KEY = "metrics-password"
-    METRICS_SOCKET_PATH = '/var/snap/jujud/common/sockets/control.socket'
-    CONFIG_SOCKET_PATH = '/var/snap/jujud/common/sockets/configchange.socket'
     DB_BIND_ADDR_KEY = 'db-bind-address'
     ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
     AGENT_ID_KEY = 'agent-id'
 
     _stored = StoredState()
+
+    @classmethod
+    def _is_snap(cls) -> bool:
+        """Return True when running inside a snap-based Juju controller."""
+        return os.path.exists('/var/snap/jujud')
+
+    @classmethod
+    def _data_dir(cls) -> str:
+        """Return the root data directory for the running controller."""
+        if cls._is_snap():
+            return '/var/snap/jujud/common'
+        # In CAAS, jujud's EffectiveSocketDir falls back to DataDir (e.g. /var/lib/juju)
+        env_dir = os.environ.get('JUJU_DATA_DIR')
+        if env_dir:
+            return env_dir
+        return '/var/lib/juju'
+
+    @classmethod
+    def _sockets_dir(cls) -> str:
+        """Return the directory containing control.socket and configchange.socket."""
+        # In snap mode sockets live under common/sockets; in CAAS they are at
+        # the data dir root (EffectiveSocketDir==DataDir when SocketDir is empty).
+        if cls._is_snap():
+            return os.path.join(cls._data_dir(), 'sockets')
+        return cls._data_dir()
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -81,10 +105,11 @@ class JujuControllerCharm(CharmBase):
 
         # TODO (manadart 2024-03-05): Get these at need.
         # No need to instantiate them for every invocation.
+        sockets_dir = self._sockets_dir()
         self._control_socket = controlsocket.ControlSocketClient(
-            socket_path=self.METRICS_SOCKET_PATH)
+            socket_path=os.path.join(sockets_dir, 'control.socket'))
         self._config_change_socket = configchangesocket.ConfigChangeSocketClient(
-            socket_path=self.CONFIG_SOCKET_PATH)
+            socket_path=os.path.join(sockets_dir, 'configchange.socket'))
 
         self._observe()
 
@@ -609,15 +634,15 @@ class JujuControllerCharm(CharmBase):
     def _controller_runtime_config(self, key: str):
         """Read a value (by key) from the runtime.conf file on disk.
 
-        The runtime.conf is read from the snap's current revision symlink
-        (/var/snap/jujud/current). During snap refresh, snapd atomically
-        updates this symlink, so the path may be briefly unavailable or
-        point to a stale directory if the refresh is in progress. This
-        edge case is acceptable for Phase 1 and will be revisited when
-        snap refresh semantics are addressed.
+        In snap mode the file is read from the current revision symlink;
+        in CAAS mode it is read from the agent config directory.
         """
-        runtime_conf_path = '/var/snap/jujud/current/agents/controller-0/runtime.conf'
-
+        if self._is_snap():
+            runtime_conf_path = '/var/snap/jujud/current/agents/controller-0/runtime.conf'
+        else:
+            runtime_conf_path = os.path.join(
+                self._data_dir(), 'agents', 'controller-0', 'runtime.conf',
+            )
         with open(runtime_conf_path) as runtime_conf_file:
             runtime_conf = yaml.safe_load(runtime_conf_file)
             return runtime_conf.get(key)
@@ -627,7 +652,9 @@ class JujuControllerCharm(CharmBase):
         the local controller ID, then use it to construct a config path.
         """
         controller_id = self._controller_agent_id()
-        return f'/var/snap/jujud/common/agents/controller-{controller_id}/controller.conf'
+        return os.path.join(
+            self._data_dir(), 'agents', f'controller-{controller_id}', 'controller.conf',
+        )
 
     def _controller_agent_id(self):
         return self._config_change_socket.get_controller_agent_id()
