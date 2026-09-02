@@ -1,7 +1,7 @@
 [project]
 name = "juju-controller"
 version = "0.1.0"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "ops",
     "cosl",
@@ -10,5 +10,39 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "coverage",
-    "flake8",
+    "pyright",
+    "ruff",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 99
+extend-exclude = [
+    ".venv",
+    ".git",
+    "build",
+    "dist",
+    "*.egg_info",
+    "lib",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "C901", "N",
+    "unsorted-imports",  # I001
+    "UP",  # Upgrade Python syntax
+]
+ignore = [
+    # This rule wants exception classes to be named with an "Error"
+    # suffix. This repo widely uses the "Exception" suffix.
+    # We ignore it rather than renaming all of them.
+    "N818",  # error-suffix-on-exception-name
+]
+
+[tool.pyright]
+pythonVersion = "3.10"
+reportUnnecessaryTypeIgnoreComment = "error"
+include = ["src", "tests"]

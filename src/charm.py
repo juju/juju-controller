@@ -2,22 +2,21 @@
 # Copyright 2021 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 
-import controlsocket
-import configchangesocket
 import json
 import logging
 import secrets
 import urllib.parse
-import yaml
-from unixsocket import APIError
+from pathlib import Path
+from typing import cast
 
-from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
+import yaml
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.data_platform_libs.v0.s3 import CredentialsChangedEvent, S3Requirer
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from ops.charm import (
     CharmBase,
     CollectStatusEvent,
@@ -27,8 +26,10 @@ from ops.charm import (
 from ops.framework import StoredState
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, Relation
-from pathlib import Path
-from typing import List, Optional, Tuple
+
+import configchangesocket
+import controlsocket
+from unixsocket import APIError
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,11 @@ logger = logging.getLogger(__name__)
 class JujuControllerCharm(CharmBase):
     METRICS_USERNAME_KEY = "metrics-username"
     METRICS_PASSWORD_KEY = "metrics-password"
-    METRICS_SOCKET_PATH = '/var/lib/juju/control.socket'
-    CONFIG_SOCKET_PATH = '/var/lib/juju/configchange.socket'
-    DB_BIND_ADDR_KEY = 'db-bind-address'
-    ALL_BIND_ADDRS_KEY = 'db-bind-addresses'
-    AGENT_ID_KEY = 'agent-id'
+    METRICS_SOCKET_PATH = "/var/lib/juju/control.socket"
+    CONFIG_SOCKET_PATH = "/var/lib/juju/configchange.socket"
+    DB_BIND_ADDR_KEY = "db-bind-address"
+    ALL_BIND_ADDRS_KEY = "db-bind-addresses"
+    AGENT_ID_KEY = "agent-id"
 
     _stored = StoredState()
 
@@ -48,20 +49,16 @@ class JujuControllerCharm(CharmBase):
         super().__init__(*args)
 
         self.charm_tracing_requirer = TracingEndpointRequirer(
-            self,
-            protocols=["otlp_http", "otlp_grpc"],
-            relation_name='charm-tracing'
+            self, protocols=["otlp_http", "otlp_grpc"], relation_name="charm-tracing"
         )
         self.charm_certificate_transfer = CertificateTransferRequires(
-            self, relationship_name='charm-tracing-ca-cert'
+            self, relationship_name="charm-tracing-ca-cert"
         )
         self.workload_tracing_requirer = TracingEndpointRequirer(
-            self,
-            protocols=["otlp_http", "otlp_grpc"],
-            relation_name='workload-tracing'
+            self, protocols=["otlp_http", "otlp_grpc"], relation_name="workload-tracing"
         )
         self.workload_certificate_transfer = CertificateTransferRequires(
-            self, relationship_name='workload-tracing-ca-cert'
+            self, relationship_name="workload-tracing-ca-cert"
         )
         self._s3 = S3Requirer(self, "s3-backend")
         self._loki_consumer = LokiPushApiConsumer(self, "loki-push-api")
@@ -82,9 +79,11 @@ class JujuControllerCharm(CharmBase):
         # TODO (manadart 2024-03-05): Get these at need.
         # No need to instantiate them for every invocation.
         self._control_socket = controlsocket.ControlSocketClient(
-            socket_path=self.METRICS_SOCKET_PATH)
+            socket_path=self.METRICS_SOCKET_PATH
+        )
         self._config_change_socket = configchangesocket.ConfigChangeSocketClient(
-            socket_path=self.CONFIG_SOCKET_PATH)
+            socket_path=self.CONFIG_SOCKET_PATH
+        )
 
         self._observe()
 
@@ -100,41 +99,47 @@ class JujuControllerCharm(CharmBase):
         # data for the dashboard and website charms, so that they can connect to
         # the controller API and display the correct information about the
         # controller.
-        self.framework.observe(
-            self.on.leader_elected, self._on_dbcluster_leader_elected)
+        self.framework.observe(self.on.leader_elected, self._on_dbcluster_leader_elected)
         self.framework.observe(self.on.leader_elected, self._on_metrics_reconcile)
         self.framework.observe(self.on.upgrade_charm, self._on_metrics_reconcile)
         self.framework.observe(
-            self.on.dashboard_relation_joined, self._on_dashboard_relation_joined)
-        self.framework.observe(
-            self.on.website_relation_joined, self._on_website_relation_joined)
+            self.on.dashboard_relation_joined, self._on_dashboard_relation_joined
+        )
+        self.framework.observe(self.on.website_relation_joined, self._on_website_relation_joined)
 
         # Metrics endpoint relation events are observed to manage users for the
         # metrics endpoint, and to maintain the correct scrape configuration for
         # the controller API in the Prometheus scrape config provided to related
         # Prometheus charms.
         self.framework.observe(
-            self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created)
+            self.on.metrics_endpoint_relation_created, self._on_metrics_endpoint_relation_created
+        )
         self.framework.observe(
-            self.on.metrics_endpoint_relation_changed, self._on_metrics_reconcile)
+            self.on.metrics_endpoint_relation_changed, self._on_metrics_reconcile
+        )
         self.framework.observe(
-            self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
+            self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken
+        )
 
         # DB cluster relation events are observed to maintain the current set of
         # bind addresses for the controller cluster in the charm's stored state,
         # and to apply it to the charm configuration when it changes.
         self.framework.observe(
-            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed)
+            self.on.dbcluster_relation_changed, self._on_dbcluster_relation_changed
+        )
         self.framework.observe(
-            self.on.dbcluster_relation_departed, self._on_dbcluster_relation_departed)
+            self.on.dbcluster_relation_departed, self._on_dbcluster_relation_departed
+        )
 
         # Tracing relation events are observed to maintain the current tracing
         # endpoint information in the charm's stored state, and to apply it to
         # the charm configuration when it changes.
         self.framework.observe(
-            self.charm_tracing_requirer.on.endpoint_changed, self._on_tracing_relation_changed)
+            self.charm_tracing_requirer.on.endpoint_changed, self._on_tracing_relation_changed
+        )
         self.framework.observe(
-            self.charm_tracing_requirer.on.endpoint_removed, self._on_tracing_relation_removed)
+            self.charm_tracing_requirer.on.endpoint_removed, self._on_tracing_relation_removed
+        )
         self.framework.observe(
             self.charm_certificate_transfer.on.certificate_set_updated,
             self._on_receive_ca_cert_updated,
@@ -162,21 +167,20 @@ class JujuControllerCharm(CharmBase):
         # S3 credential events are observed to maintain the current S3
         # config in the charm's stored state, and to apply it via the
         # control socket when they change.
-        self.framework.observe(
-            self._s3.on.credentials_changed, self._on_s3_credentials_changed)
-        self.framework.observe(
-            self._s3.on.credentials_gone,
-            self._on_s3_credentials_gone)
+        self.framework.observe(self._s3.on.credentials_changed, self._on_s3_credentials_changed)
+        self.framework.observe(self._s3.on.credentials_gone, self._on_s3_credentials_gone)
 
         # Loki Push API events are observed to maintain the correct controller
         # API port in the config file, which is needed for Loki to push logs to
         # the correct place.
         self.framework.observe(
             self._loki_consumer.on.loki_push_api_endpoint_joined,
-            self._on_loki_push_api_endpoint_joined)
+            self._on_loki_push_api_endpoint_joined,
+        )
         self.framework.observe(
             self._loki_consumer.on.loki_push_api_endpoint_departed,
-            self._on_loki_push_api_endpoint_departed)
+            self._on_loki_push_api_endpoint_departed,
+        )
         self.framework.observe(
             self.loki_certificate_transfer.on.certificate_set_updated,
             self._on_receive_loki_ca_cert_updated,
@@ -192,7 +196,7 @@ class JujuControllerCharm(CharmBase):
         """Ensure that the controller configuration file exists."""
         file_path = self._controller_config_path()
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        open(file_path, 'w+').close()
+        open(file_path, "w+").close()
 
     def _on_start(self, _):
         self.unit.status = ActiveStatus()
@@ -219,15 +223,19 @@ class JujuControllerCharm(CharmBase):
     def _on_collect_status(self, event: CollectStatusEvent):
         has_blocking_status = False
         if len(self._stored.last_bind_addresses) > 1:
-            event.add_status(BlockedStatus(
-                'multiple possible DB bind addresses; set a suitable dbcluster network binding'))
+            event.add_status(
+                BlockedStatus(
+                    "multiple possible DB bind addresses; set a suitable dbcluster network binding"
+                )
+            )
             has_blocking_status = True
 
         try:
             self.api_port()
         except AgentConfException as e:
-            event.add_status(BlockedStatus(
-                f'cannot read controller API port from agent configuration: {e}'))
+            event.add_status(
+                BlockedStatus(f"cannot read controller API port from agent configuration: {e}")
+            )
             has_blocking_status = True
 
         if self._stored.tracing_status_error:
@@ -256,17 +264,17 @@ class JujuControllerCharm(CharmBase):
             event.add_status(ActiveStatus())
 
     def _on_config_changed(self, _):
-        controller_url = self.config['controller-url']
-        logger.info('got a new controller-url: %r', controller_url)
+        controller_url = self.config["controller-url"]
+        logger.info("got a new controller-url: %r", controller_url)
         self._update_workload_tracing_config()
 
     def _on_dashboard_relation_joined(self, event):
-        logger.info('got a new dashboard relation: %r', event)
+        logger.info("got a new dashboard relation: %r", event)
         if self.unit.is_leader():
             event.relation.data[self.app].update({
-                'controller-url': self.config['controller-url'],
-                'identity-provider-url': self.config['identity-provider-url'],
-                'is-juju': str(self.config['is-juju']),
+                "controller-url": self.config["controller-url"],
+                "identity-provider-url": self.config["identity-provider-url"],
+                "is-juju": str(self.config["is-juju"]),
             })
         # TODO: do we need to poke something on the controller so that the `juju
         # dashboard` command will work?
@@ -277,7 +285,7 @@ class JujuControllerCharm(CharmBase):
         port = self.api_port()
         if port is None:
             logger.error("machine does not appear to be a controller")
-            self.unit.status = BlockedStatus('machine does not appear to be a controller')
+            self.unit.status = BlockedStatus("machine does not appear to be a controller")
             return
 
         address = None
@@ -286,9 +294,9 @@ class JujuControllerCharm(CharmBase):
             address = binding.network.ingress_address
             if self.unit.is_leader():
                 event.relation.data[self.unit].update({
-                    'hostname': str(address),
-                    'private-address': str(address),
-                    'port': str(port)
+                    "hostname": str(address),
+                    "private-address": str(address),
+                    "port": str(port),
                 })
 
     def _metrics_credentials(self, relations):
@@ -305,7 +313,7 @@ class JujuControllerCharm(CharmBase):
                 username = basic_auth["username"]
                 # Use removeprefix once Python 3.8 support is dropped.
                 if username.startswith("user-"):
-                    username = username[len("user-"):]
+                    username = username[len("user-") :]
                 return username, basic_auth["password"]
             except (IndexError, KeyError, TypeError, ValueError):
                 continue
@@ -316,22 +324,25 @@ class JujuControllerCharm(CharmBase):
             api_port = self.api_port()
         except AgentConfException as e:
             self.unit.status = BlockedStatus(
-                f"can't read controller API port from agent.conf: {e}")
-            logger.error('cannot read controller API port from agent configuration: %s', e)
+                f"can't read controller API port from agent.conf: {e}"
+            )
+            logger.error("cannot read controller API port from agent configuration: %s", e)
             return None
-        return [{
-            "metrics_path": "/introspection/metrics",
-            "scheme": "https",
-            "static_configs": [{"targets": [f"*:{api_port}"]}],
-            "basic_auth": {
-                "username": f"user-{username}",
-                "password": password,
-            },
-            "tls_config": {
-                "ca_file": self.ca_cert(),
-                "server_name": "juju-apiserver",
-            },
-        }]
+        return [
+            {
+                "metrics_path": "/introspection/metrics",
+                "scheme": "https",
+                "static_configs": [{"targets": [f"*:{api_port}"]}],
+                "basic_auth": {
+                    "username": f"user-{username}",
+                    "password": password,
+                },
+                "tls_config": {
+                    "ca_file": self.ca_cert(),
+                    "server_name": "juju-apiserver",
+                },
+            }
+        ]
 
     def _configure_metrics_endpoint(self, username, password):
         jobs = self._metrics_jobs(username, password)
@@ -344,8 +355,7 @@ class JujuControllerCharm(CharmBase):
             else:
                 self._metrics_endpoint.update_scrape_job_spec(jobs)
         except ValueError as e:
-            logger.warning(
-                "metrics-endpoint binding not IP-resolvable yet; will retry: %s", e)
+            logger.warning("metrics-endpoint binding not IP-resolvable yet; will retry: %s", e)
             raise BindingPendingException() from e
 
     def _configure_metrics_as_unit(self):
@@ -355,7 +365,8 @@ class JujuControllerCharm(CharmBase):
             self._metrics_endpoint.set_scrape_job_spec()
         except ValueError as e:
             logger.warning(
-                "metrics-endpoint binding not IP-resolvable yet (unit); will retry: %s", e)
+                "metrics-endpoint binding not IP-resolvable yet (unit); will retry: %s", e
+            )
             raise BindingPendingException() from e
 
     def _remove_metrics_user(self, username):
@@ -419,12 +430,11 @@ class JujuControllerCharm(CharmBase):
 
     def _on_metrics_endpoint_relation_broken(self, event):
         relations = [
-            relation for relation in self.model.relations["metrics-endpoint"]
+            relation
+            for relation in self.model.relations["metrics-endpoint"]
             if relation.id != event.relation.id
         ]
-        credentials = self._metrics_credentials(
-            [event.relation] + relations
-        )
+        credentials = self._metrics_credentials([event.relation] + relations)
         if relations:
             self._reconcile_metrics(relations)
             if self.unit.is_leader() and credentials:
@@ -489,12 +499,8 @@ class JujuControllerCharm(CharmBase):
             return
 
         endpoints = {
-            "otlp_grpc": self.workload_tracing_requirer.get_endpoint(
-                "otlp_grpc", event.relation
-            ),
-            "otlp_http": self.workload_tracing_requirer.get_endpoint(
-                "otlp_http", event.relation
-            ),
+            "otlp_grpc": self.workload_tracing_requirer.get_endpoint("otlp_grpc", event.relation),
+            "otlp_http": self.workload_tracing_requirer.get_endpoint("otlp_http", event.relation),
         }
         logger.info("workload tracing endpoints updated: %s", endpoints)
         self._update_workload_tracing_config(allow_endpoint_only=True)
@@ -540,7 +546,8 @@ class JujuControllerCharm(CharmBase):
                     all_bind_addresses[agent_id] = unit_data[self.DB_BIND_ADDR_KEY]
 
             relation.data[self.app][self.ALL_BIND_ADDRS_KEY] = json.dumps(
-                all_bind_addresses, sort_keys=True)
+                all_bind_addresses, sort_keys=True
+            )
             self._update_config_file(all_bind_addresses)
         else:
             app_data = relation.data[self.app]
@@ -563,17 +570,18 @@ class JujuControllerCharm(CharmBase):
 
         if len(ips) > 1:
             raise DBBindAddressException(
-                'multiple possible DB bind addresses;set a suitable cluster network binding')
+                "multiple possible DB bind addresses;set a suitable cluster network binding"
+            )
 
-        logger.info('setting DB bind address: %s', ip)
+        logger.info("setting DB bind address: %s", ip)
         relation.data[self.unit].update({
             self.DB_BIND_ADDR_KEY: ip,
-            self.AGENT_ID_KEY: self._controller_agent_id()
+            self.AGENT_ID_KEY: self._controller_agent_id(),
         })
         return ip
 
     def _update_config_file(self, bind_addresses):
-        logger.info('writing new DB cluster to config file: %s', bind_addresses)
+        logger.info("writing new DB cluster to config file: %s", bind_addresses)
 
         file_path = self._controller_config_path()
         with open(file_path) as conf_file:
@@ -583,7 +591,7 @@ class JujuControllerCharm(CharmBase):
             conf = dict()
         conf[self.ALL_BIND_ADDRS_KEY] = bind_addresses
 
-        with open(file_path, 'w') as conf_file:
+        with open(file_path, "w") as conf_file:
             yaml.dump(conf, conf_file)
 
         self._request_config_reload()
@@ -591,25 +599,25 @@ class JujuControllerCharm(CharmBase):
 
     def api_port(self) -> str:
         """Return the port on which the controller API server is listening."""
-        api_addresses = self._agent_conf('apiaddresses')
+        api_addresses = self._agent_conf("apiaddresses")
         if not api_addresses:
             raise AgentConfException("agent.conf key 'apiaddresses' missing")
-        if not isinstance(api_addresses, List):
+        if not isinstance(api_addresses, list):
             raise AgentConfException("agent.conf key 'apiaddresses' is not a list")
 
-        parsed_url = urllib.parse.urlsplit('//' + api_addresses[0])
+        parsed_url = urllib.parse.urlsplit("//" + api_addresses[0])
         if not parsed_url.port:
-            raise AgentConfException('API address does not include port')
+            raise AgentConfException("API address does not include port")
         return parsed_url.port
 
     def ca_cert(self) -> str:
         """Return the controller's CA certificate."""
-        return self._agent_conf('cacert')
+        return self._agent_conf("cacert")
 
     def _agent_conf(self, key: str):
         """Read a value (by key) from the agent.conf file on disk."""
-        unit_name = self.unit.name.replace('/', '-')
-        agent_conf_path = f'/var/lib/juju/agents/unit-{unit_name}/agent.conf'
+        unit_name = self.unit.name.replace("/", "-")
+        agent_conf_path = f"/var/lib/juju/agents/unit-{unit_name}/agent.conf"
 
         with open(agent_conf_path) as agent_conf_file:
             agent_conf = yaml.safe_load(agent_conf_file)
@@ -620,7 +628,7 @@ class JujuControllerCharm(CharmBase):
         the local controller ID, then use it to construct a config path.
         """
         controller_id = self._controller_agent_id()
-        return f'/var/lib/juju/agents/controller-{controller_id}/controller.conf'
+        return f"/var/lib/juju/agents/controller-{controller_id}/controller.conf"
 
     def _controller_agent_id(self):
         return self._config_change_socket.get_controller_agent_id()
@@ -630,16 +638,16 @@ class JujuControllerCharm(CharmBase):
         self._config_change_socket.reload_config()
 
     @staticmethod
-    def _endpoint_requires_ca_cert(endpoint: Optional[str]) -> bool:
+    def _endpoint_requires_ca_cert(endpoint: str | None) -> bool:
         return bool(endpoint) and endpoint.startswith(("https://", "grpcs://"))
 
     def _current_tracing_config(
         self,
         tracing_requirer: TracingEndpointRequirer,
         certificate_transfer: CertificateTransferRequires,
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        grpc_endpoint: Optional[str] = None
-        http_endpoint: Optional[str] = None
+    ) -> tuple[str | None, str | None, str | None]:
+        grpc_endpoint: str | None = None
+        http_endpoint: str | None = None
 
         tracing_data = tracing_requirer.get_all_endpoints()
         if tracing_data:
@@ -651,13 +659,11 @@ class JujuControllerCharm(CharmBase):
 
         return grpc_endpoint, http_endpoint, self._current_ca_cert(certificate_transfer)
 
-    def _current_ca_cert(
-        self, certificate_transfer: CertificateTransferRequires
-    ) -> Optional[str]:
+    def _current_ca_cert(self, certificate_transfer: CertificateTransferRequires) -> str | None:
         certificates = certificate_transfer.get_all_certificates()
         return "\n".join(sorted(certificates)) if certificates else None
 
-    def _current_charm_tracing_config(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _current_charm_tracing_config(self) -> tuple[str | None, str | None, str | None]:
         return self._current_tracing_config(
             tracing_requirer=self.charm_tracing_requirer,
             certificate_transfer=self.charm_certificate_transfer,
@@ -665,7 +671,7 @@ class JujuControllerCharm(CharmBase):
 
     def _current_workload_tracing_config(
         self,
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None, str | None]:
         return self._current_tracing_config(
             tracing_requirer=self.workload_tracing_requirer,
             certificate_transfer=self.workload_certificate_transfer,
@@ -673,18 +679,16 @@ class JujuControllerCharm(CharmBase):
 
     def _validate_open_telemetry_sample_ratio(self, sample_ratio: float):
         if sample_ratio < 0 or sample_ratio > 1:
-            raise ValueError(
-                "invalid workload-tracing-sample-ratio: must be between 0 and 1"
-            )
+            raise ValueError("invalid workload-tracing-sample-ratio: must be between 0 and 1")
 
-    def _current_open_telemetry_config(self) -> Tuple[bool, float, str, bool]:
+    def _current_open_telemetry_config(self) -> tuple[bool, float, str, bool]:
         sample_ratio = float(self.config["workload-tracing-sample-ratio"])
         self._validate_open_telemetry_sample_ratio(sample_ratio)
         return (
-            self.config["workload-tracing-stack-traces"],
+            cast(bool, self.config["workload-tracing-stack-traces"]),
             sample_ratio,
-            self.config["workload-tracing-tail-sampling-threshold"],
-            self.config["workload-tracing-insecure-skip-verify"],
+            cast(str, self.config["workload-tracing-tail-sampling-threshold"]),
+            cast(bool, self.config["workload-tracing-insecure-skip-verify"]),
         )
 
     def _current_s3_config(self):
@@ -717,7 +721,8 @@ class JujuControllerCharm(CharmBase):
             any(
                 self._endpoint_requires_ca_cert(endpoint)
                 for endpoint in (grpc_endpoint, http_endpoint)
-            ) and not ca_cert
+            )
+            and not ca_cert
         ):
             self._stored.tracing_status_error = (
                 "charm tracing endpoint requires a CA cert, but none is available"
@@ -769,7 +774,9 @@ class JujuControllerCharm(CharmBase):
             any(
                 self._endpoint_requires_ca_cert(endpoint)
                 for endpoint in (grpc_endpoint, http_endpoint)
-            ) and not ca_cert and not insecure_skip_verify
+            )
+            and not ca_cert
+            and not insecure_skip_verify
         ):
             if not had_invalid_open_telemetry_config:
                 self._stored.workload_tracing_status_error = (
@@ -844,7 +851,7 @@ class JujuControllerCharm(CharmBase):
         logger.info("Loki CA certificate removed from relation id %s", event.relation_id)
         self._reconcile_loki_endpoint()
 
-    def _current_loki_endpoint(self) -> Optional[dict]:
+    def _current_loki_endpoint(self) -> dict | None:
         endpoints = self._loki_consumer.loki_endpoints
         if not endpoints:
             self._stored.loki_status_error = None
@@ -918,7 +925,7 @@ def metrics_username(relation: Relation) -> str:
     relation. This username has the form
         juju-metrics-r1
     """
-    return f'juju-metrics-r{relation.id}'
+    return f"juju-metrics-r{relation.id}"
 
 
 def generate_password() -> str:
