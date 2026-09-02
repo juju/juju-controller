@@ -582,7 +582,16 @@ class JujuControllerCharm(CharmBase):
 
         Returns the db bind address.
         """
-        ips = [str(ip) for ip in self.model.get_binding(relation).network.ingress_addresses]
+        try:
+            ips = [str(ip) for ip in self.model.get_binding(relation).network.ingress_addresses]
+        except ValueError:
+            # In CAAS, ingress addresses may be Kubernetes service hostnames
+            # rather than IPs. Dqlite clustering is not used in CAAS, so
+            # skip setting the bind address.
+            logger.warning(
+                "cannot resolve db bind address: ingress addresses are not IPs; "
+                "skipping dbcluster configuration")
+            return None
         self._stored.last_bind_addresses = ips
         ip = ips[0]
 
@@ -644,7 +653,7 @@ class JujuControllerCharm(CharmBase):
                 self._data_dir(), 'agents', 'controller-0', 'runtime.conf',
             )
         with open(runtime_conf_path) as runtime_conf_file:
-            runtime_conf = yaml.safe_load(runtime_conf_file)
+            runtime_conf = yaml.safe_load(runtime_conf_file) or {}
             return runtime_conf.get(key)
 
     def _controller_config_path(self) -> str:
