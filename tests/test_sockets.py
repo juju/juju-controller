@@ -5,6 +5,8 @@
 import io
 import unittest
 import urllib.error
+from unittest.mock import call, patch
+
 from controlsocket import ControlSocketClient
 from configchangesocket import ConfigChangeSocketClient
 from unixsocket import APIError, ConnectionError
@@ -364,8 +366,105 @@ class TestClass(unittest.TestCase):
             error=urllib.error.URLError('could not connect to socket')
         )
 
-        with self.assertRaisesRegex(ConnectionError, 'could not connect to socket'):
+        with patch('controlsocket.os.path.exists', return_value=True), \
+                patch('controlsocket.time.sleep') as mock_sleep:
+            with self.assertRaisesRegex(ConnectionError, 'could not connect to socket'):
+                control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+        self.assertEqual(mock_opener.open_calls, 4)
+        self.assertEqual(
+            mock_sleep.call_args_list,
+            [call(0.1), call(0.2), call(0.4)],
+        )
+
+    def test_connection_error_is_retried_until_success(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            responses=[
+                urllib.error.URLError('socket unavailable'),
+                urllib.error.URLError('socket still unavailable'),
+                MockResponse(
+                    headers=MockHeaders(content_type='application/json'),
+                    body=r'{"message":"created user"}',
+                ),
+            ],
+        )
+
+        with patch('controlsocket.os.path.exists', return_value=True), \
+                patch('controlsocket.time.sleep') as mock_sleep:
             control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+        self.assertEqual(mock_opener.open_calls, 3)
+        self.assertEqual(mock_sleep.call_args_list, [call(0.1), call(0.2)])
+
+    def test_missing_socket_waits_longer_until_it_exists(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            responses=[
+                urllib.error.URLError(FileNotFoundError('socket does not exist')),
+                MockResponse(
+                    headers=MockHeaders(content_type='application/json'),
+                    body=r'{"message":"created user"}',
+                ),
+            ],
+        )
+
+        with patch(
+            'controlsocket.os.path.exists', side_effect=[False, False, True]
+        ), patch('controlsocket.time.sleep') as mock_sleep:
+            control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+        self.assertEqual(mock_opener.open_calls, 2)
+        self.assertEqual(mock_sleep.call_args_list, [call(5.0), call(5.0)])
+
+    def test_missing_socket_stops_waiting_after_one_minute(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            error=urllib.error.URLError(FileNotFoundError('socket does not exist')),
+        )
+
+        with patch('controlsocket.os.path.exists', return_value=False), \
+                patch('controlsocket.time.sleep') as mock_sleep:
+            with self.assertRaisesRegex(ConnectionError, 'socket does not exist'):
+                control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+        self.assertEqual(mock_opener.open_calls, 1)
+        self.assertEqual(mock_sleep.call_args_list, [call(5.0)] * 12)
+
+    def test_api_error_is_not_retried(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            error=urllib.error.HTTPError(
+                url='http://localhost/metrics-users',
+                code=500,
+                msg='internal error',
+                hdrs=None,
+                fp=io.BytesIO(br'{"error":"internal error"}'),
+            ),
+        )
+
+        with patch('controlsocket.time.sleep') as mock_sleep:
+            with self.assertRaises(APIError):
+                control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+        self.assertEqual(mock_opener.open_calls, 1)
+        mock_sleep.assert_not_called()
 
     def test_get_controller_agent_id(self):
         mock_opener = MockOpener(self)
@@ -401,16 +500,19 @@ class TestClass(unittest.TestCase):
 class MockOpener:
     def __init__(self, test_case):
         self.test = test_case
+        self.open_calls = 0
 
-    def expect(self, url, method, body, response=None, error=None):
+    def expect(self, url, method, body, response=None, error=None, responses=None):
         self.url = url
         self.method = method
         self.body = body
 
         self.response = response
         self.error = error
+        self.responses = iter(responses) if responses is not None else None
 
     def open(self, request, timeout):
+        self.open_calls += 1
         self.test.assertEqual(request.full_url, self.url)
         self.test.assertEqual(request.method, self.method)
         if self.body is None:
@@ -418,7 +520,12 @@ class MockOpener:
         else:
             self.test.assertEqual(request.data.decode('utf-8'), self.body)
 
-        if self.error:
+        if self.responses is not None:
+            response = next(self.responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+        elif self.error:
             raise self.error
         else:
             return self.response

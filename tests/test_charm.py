@@ -18,7 +18,7 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     TransportProtocolType,
 )
 from charm import JujuControllerCharm, AgentConfException
-from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus
+from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus, WaitingStatus
 from ops.testing import Harness
 from unittest.mock import Mock, mock_open, patch
 from controlsocket import APIError
@@ -74,9 +74,24 @@ def certificate_provider_data(certificates):
 
 class TestCharm(unittest.TestCase):
     def setUp(self):
+        sleep_patcher = patch("controlsocket.time.sleep")
+        sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+
+    def test_error_status_type_is_independent_of_message(self):
+        message = "waiting for controller control socket"
+
+        self.assertIsInstance(
+            self.harness.charm._status_for_error(message, transient=False),
+            BlockedStatus,
+        )
+        self.assertIsInstance(
+            self.harness.charm._status_for_error("any message", transient=True),
+            WaitingStatus,
+        )
 
     def test_start_sets_active_status(self):
         harness = Harness(JujuControllerCharm)
@@ -228,6 +243,26 @@ class TestCharm(unittest.TestCase):
         mock_provider_instance.update_scrape_job_spec.side_effect = None
         harness.charm._on_metrics_reconcile(None)
         mock_provider_instance.update_scrape_job_spec.assert_called_once()
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("charm.MetricsEndpointProvider", autospec=True)
+    @patch("charm.generate_password", new=lambda: "passwd")
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    def test_metrics_socket_error_defers_and_retries(
+        self, mock_add_user, _mock_metrics_provider, _
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_add_user.side_effect = SocketConnectionError("socket unavailable")
+
+        relation_id = harness.add_relation("metrics-endpoint", "prometheus-k8s")
+
+        notices = [notice[0] for notice in harness.framework._storage.notices("")]
+        self.assertTrue(any("metrics_endpoint_relation_created" in n for n in notices))
+
+        mock_add_user.side_effect = None
+        harness.update_relation_data(relation_id, "prometheus-k8s", {"ready": "true"})
+        self.assertGreaterEqual(mock_add_user.call_count, 2)
 
     @patch("charm.MetricsEndpointProvider", autospec=True)
     def test_metrics_endpoint_non_leader_binding_unresolved_defers(
@@ -586,7 +621,7 @@ class TestCharm(unittest.TestCase):
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_tracing_relation_update_sets_blocked_on_socket_error(
+    def test_tracing_relation_update_sets_waiting_on_socket_error(
         self, mock_set_tracing_config, *_
     ):
         harness = self.harness
@@ -605,9 +640,9 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, WaitingStatus)
         self.assertEqual(
-            harness.charm.unit.status.message, "failed to set charm tracing config"
+            harness.charm.unit.status.message, "waiting for controller control socket"
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -631,7 +666,7 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertEqual(
-            harness.charm.unit.status.message, "failed to set charm tracing config"
+            harness.charm.unit.status.message, "waiting for controller control socket"
         )
 
         harness.remove_relation(relation_id)
@@ -954,7 +989,7 @@ class TestCharm(unittest.TestCase):
         side_effect=SocketConnectionError("could not connect to socket"),
     )
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
-    def test_config_changed_sets_blocked_status_on_socket_error(
+    def test_config_changed_waits_and_update_status_recovers_on_socket_error(
         self,
         _mock_set_charm_tracing_config,
         mock_set_workload_tracing_config,
@@ -978,11 +1013,17 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, WaitingStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
-            "failed to set workload tracing config",
+            "waiting for controller control socket",
         )
+
+        mock_set_workload_tracing_config.side_effect = None
+        harness.charm.on.update_status.emit()
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
@@ -1008,7 +1049,7 @@ class TestCharm(unittest.TestCase):
             harness.evaluate_status()
         self.assertEqual(
             harness.charm.unit.status.message,
-            "failed to set workload tracing config",
+            "waiting for controller control socket",
         )
 
         harness.update_config({"workload-tracing-stack-traces": True})
@@ -1269,7 +1310,7 @@ class TestCharm(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
     @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
-    def test_workload_tracing_relation_update_sets_blocked_on_socket_error(
+    def test_workload_tracing_relation_update_sets_waiting_on_socket_error(
         self,
         mock_set_workload_tracing_config,
         _mock_set_charm_tracing_config,
@@ -1294,9 +1335,9 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, WaitingStatus)
         self.assertEqual(
-            harness.charm.unit.status.message, "failed to set workload tracing config"
+            harness.charm.unit.status.message, "waiting for controller control socket"
         )
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
@@ -1327,7 +1368,7 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
         self.assertEqual(
-            harness.charm.unit.status.message, "failed to set workload tracing config"
+            harness.charm.unit.status.message, "waiting for controller control socket"
         )
 
         harness.remove_relation(relation_id)
