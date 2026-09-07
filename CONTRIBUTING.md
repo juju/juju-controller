@@ -23,6 +23,17 @@ operator behaviour without full deployment. Just `run_tests`:
 
     ./run_tests
 
+The `run_tests` script runs `ruff` lint and format checks. They will report
+error but don't fix any file. To let `ruff` fix trivial errors automatically, 
+activate the virtualenv and run:
+
+```console
+$ ruff check --preview --fix src/ tests/
+$ ruff format --preview src/ tests/
+```
+
+We run format after check to make sure all fixes from ruff are re-formatted correctly.
+
 ## Deploying
 
 Before you deploy your modified controller charm, you will need to pack it using Charmcraft:
