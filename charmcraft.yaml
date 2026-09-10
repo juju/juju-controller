@@ -110,6 +110,27 @@ config:
       default: true
       description: Whether this is a standalone Juju controller
       type: boolean
+    api-port:
+      default: 17070
+      description: |
+        The port on which the controller API server listens. The charm opens
+        this port so that clients can reach the controller API. Expose the
+        application (optionally with --to-cidrs) to control access.
+      type: int
+    ssh-server-port:
+      default: 17022
+      description: |
+        The port on which the controller's embedded SSH server (jump host)
+        listens. The charm opens this port so that clients can reach the SSH
+        server. Expose the application (optionally with --to-cidrs) to control
+        access.
+      type: int
+    autocert-dns-name:
+      default: ""
+      description: |
+        The DNS name used for Let's Encrypt (autocert). When set, the charm
+        opens port 80 to handle the Let's Encrypt HTTP challenge.
+      type: string
     workload-tracing-stack-traces:
       default: false
       description: Whether stack traces should be added per workload tracing span.

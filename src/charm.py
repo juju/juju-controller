@@ -24,6 +24,7 @@ from ops.charm import (
     InstallEvent,
     LeaderElectedEvent,
 )
+from ops import Port
 from ops.framework import StoredState
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, Relation
@@ -258,7 +259,30 @@ class JujuControllerCharm(CharmBase):
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
         logger.info('got a new controller-url: %r', controller_url)
+        self._reconcile_ports()
         self._update_workload_tracing_config()
+
+    def _reconcile_ports(self):
+        """Open the controller ports declared in charm config.
+
+        The controller application (jujud) is the workload of this charm, so
+        its externally-reachable ports are a property of the charm. We use the
+        declarative set_ports so that any previously-opened port not in the
+        desired set is closed. The ports only become reachable once the
+        application is exposed (juju expose), which allows operators to
+        restrict access with --to-cidrs.
+        """
+        desired = [
+            Port('tcp', int(self.config['api-port'])),
+            Port('tcp', int(self.config['ssh-server-port'])),
+        ]
+        # Port 80 is only needed for the Let's Encrypt HTTP challenge, which
+        # only applies when an autocert DNS name is configured.
+        if self.config['autocert-dns-name']:
+            desired.append(Port('tcp', 80))
+
+        logger.info('reconciling controller ports: %r', desired)
+        self.unit.set_ports(*desired)
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)

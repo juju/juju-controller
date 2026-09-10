@@ -2654,6 +2654,64 @@ class TestCharm(unittest.TestCase):
         mock_reload_config.assert_called_once()
 
 
+@patch("controlsocket.ControlSocketClient.set_workload_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_charm_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_loki_endpoint", Mock())
+class TestControllerPorts(unittest.TestCase):
+    """Tests that the charm opens the controller ports declared in config.
+
+    The controller ports (API, SSH server, and optionally 80 for autocert) are
+    a property of the charm and are opened via config. They only become
+    reachable once the application is exposed.
+    """
+
+    def setUp(self):
+        self.harness = Harness(JujuControllerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+
+    def _opened(self):
+        # Return the set of (protocol, port) tuples currently opened.
+        return {(p.protocol, p.port) for p in self.harness.model.unit.opened_ports()}
+
+    def test_default_ports_opened_on_config_changed(self):
+        # With default config, the API and SSH server ports are opened and
+        # port 80 is not (no autocert DNS name configured).
+        self.harness.charm.on.config_changed.emit()
+
+        self.assertEqual(self._opened(), {("tcp", 17070), ("tcp", 17022)})
+
+    def test_custom_ports_opened(self):
+        # Changing the port config opens the new ports and closes the old ones
+        # (set_ports is declarative).
+        self.harness.charm.on.config_changed.emit()
+        self.assertIn(("tcp", 17022), self._opened())
+
+        self.harness.update_config({"ssh-server-port": 17099, "api-port": 17071})
+
+        self.assertEqual(self._opened(), {("tcp", 17071), ("tcp", 17099)})
+
+    def test_autocert_opens_port_80(self):
+        # Setting an autocert DNS name opens port 80 for the Let's Encrypt
+        # HTTP challenge, in addition to the API and SSH server ports.
+        self.harness.update_config({"autocert-dns-name": "controller.example.com"})
+
+        self.assertEqual(
+            self._opened(),
+            {("tcp", 17070), ("tcp", 17022), ("tcp", 80)},
+        )
+
+    def test_autocert_unset_closes_port_80(self):
+        # Clearing the autocert DNS name closes port 80 again.
+        self.harness.update_config({"autocert-dns-name": "controller.example.com"})
+        self.assertIn(("tcp", 80), self._opened())
+
+        self.harness.update_config({"autocert-dns-name": ""})
+
+        self.assertNotIn(("tcp", 80), self._opened())
+        self.assertEqual(self._opened(), {("tcp", 17070), ("tcp", 17022)})
+
+
 class mockNetwork:
     def __init__(self, addresses):
         self.ingress_addresses = [ipaddress.ip_address(addr) for addr in addresses]
