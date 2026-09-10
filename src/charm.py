@@ -10,6 +10,7 @@ import secrets
 import urllib.parse
 import yaml
 from unixsocket import APIError
+from controlsocket import SocketNotReadyError
 
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
@@ -211,6 +212,8 @@ class JujuControllerCharm(CharmBase):
             logger.info("reapplying S3 config after leadership change")
             self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
+        except SocketNotReadyError:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to reapply S3 config after leadership change: %s", exc)
             self._stored.s3_status_pending = False
@@ -732,6 +735,8 @@ class JujuControllerCharm(CharmBase):
                 ca_cert=ca_cert,
             )
             self._stored.tracing_status_error = None
+        except SocketNotReadyError:
+            raise
         except Exception as exc:
             logger.error("failed to set charm tracing config: %s", exc)
             self._stored.tracing_status_error = "failed to set charm tracing config"
@@ -787,6 +792,8 @@ class JujuControllerCharm(CharmBase):
             )
             if open_telemetry_config:
                 self._stored.workload_tracing_status_error = None
+        except SocketNotReadyError:
+            raise
         except Exception as exc:
             logger.error("failed to set workload tracing config: %s", exc)
             self._stored.workload_tracing_status_error = "failed to set workload tracing config"
@@ -805,6 +812,8 @@ class JujuControllerCharm(CharmBase):
             logger.info("applying new S3 config")
             self._control_socket.add_s3_config(config)
             self._stored.s3_status_error = None
+        except SocketNotReadyError:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to apply S3 config: %s", exc)
             self._stored.s3_status_pending = False
@@ -818,6 +827,8 @@ class JujuControllerCharm(CharmBase):
         try:
             self._control_socket.remove_s3_config()
             self._stored.s3_status_error = None
+        except SocketNotReadyError:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("failed to remove S3 config: %s", exc)
             self._stored.s3_status_error = "failed to remove s3 config"
@@ -882,6 +893,8 @@ class JujuControllerCharm(CharmBase):
                 self._stored.loki_status_error = None
                 if report_applying_status:
                     self.unit.status = MaintenanceStatus("applying loki endpoint")
+            except SocketNotReadyError:
+                raise
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("failed to apply Loki endpoint: %s", exc)
                 self._stored.loki_status_error = "failed to apply loki endpoint"
@@ -898,6 +911,8 @@ class JujuControllerCharm(CharmBase):
             self._control_socket.remove_loki_endpoint()
             self._stored.loki_status_error = None
             self._stored.loki_endpoint_seen = False
+        except SocketNotReadyError:
+            raise
         except APIError as exc:
             if exc.code == 404:
                 self._stored.loki_status_error = None

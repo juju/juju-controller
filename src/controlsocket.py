@@ -5,7 +5,7 @@ import urllib
 from typing import Optional
 
 import unixsocket
-from unixsocket import APIError  # noqa: F401, re-exported for charm.py
+from unixsocket import APIError, SocketNotReadyError  # noqa: F401, re-exported for charm.py
 import logging
 
 logger = logging.getLogger(__name__)

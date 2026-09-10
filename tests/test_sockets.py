@@ -7,13 +7,17 @@ import unittest
 import urllib.error
 from controlsocket import ControlSocketClient
 from configchangesocket import ConfigChangeSocketClient
-from unixsocket import APIError, ConnectionError
+from unixsocket import APIError, ConnectionError, SocketNotReadyError
 
 
 class TestAPIErrorReexport(unittest.TestCase):
     def test_controlsocket_reexports_api_error(self):
         from controlsocket import APIError as CSAPIError
         assert CSAPIError is APIError
+
+    def test_controlsocket_reexports_socket_not_ready_error(self):
+        from controlsocket import SocketNotReadyError as CSSocketNotReadyError
+        assert CSSocketNotReadyError is SocketNotReadyError
 
 
 class TestClass(unittest.TestCase):
@@ -365,6 +369,40 @@ class TestClass(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ConnectionError, 'could not connect to socket'):
+            control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+    def test_socket_not_ready_file_not_found(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            error=urllib.error.URLError(
+                FileNotFoundError(2, 'No such file or directory')
+            )
+        )
+
+        with self.assertRaisesRegex(
+            SocketNotReadyError, 'No such file or directory'
+        ):
+            control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
+
+    def test_socket_not_ready_connection_refused(self):
+        mock_opener = MockOpener(self)
+        control_socket = ControlSocketClient('fake_socket_path', opener=mock_opener)
+
+        mock_opener.expect(
+            url='http://localhost/metrics-users',
+            method='POST',
+            body=r'{"username": "juju-metrics-r0", "password": "passwd"}',
+            error=urllib.error.URLError(
+                ConnectionRefusedError(111, 'Connection refused')
+            )
+        )
+
+        with self.assertRaisesRegex(SocketNotReadyError, 'Connection refused'):
             control_socket.add_metrics_user('juju-metrics-r0', 'passwd')
 
     def test_get_controller_agent_id(self):

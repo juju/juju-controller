@@ -116,6 +116,8 @@ class SocketClient:
                 message = f'{type(e2).__name__} - {e2}'
             raise APIError(body, code, status, message)
         except urllib.error.URLError as e:
+            if isinstance(e.reason, (FileNotFoundError, ConnectionRefusedError)):
+                raise SocketNotReadyError(str(e.reason))
             raise ConnectionError(e.reason)
 
         return response
@@ -203,3 +205,14 @@ class APIError(Error):
 
     def __repr__(self):
         return f'APIError({self.body!r}, {self.code!r}, {self.status!r}, {self.message!r})'
+
+
+class SocketNotReadyError(ConnectionError):
+    """Raised when the Unix socket is absent or not yet accepting connections.
+
+    This is a transient startup condition, but it must not be swallowed,
+    deferred past, or turned into a blocked status: let it propagate out of
+    the event handler so the hook fails and Juju puts the unit into error
+    state. Juju automatically retries failed hooks, so the operation is
+    retried once the socket becomes available.
+    """

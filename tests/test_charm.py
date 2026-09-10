@@ -22,6 +22,7 @@ from ops.model import BlockedStatus, ActiveStatus, MaintenanceStatus
 from ops.testing import Harness
 from unittest.mock import Mock, mock_open, patch
 from controlsocket import APIError
+from controlsocket import SocketNotReadyError
 from unixsocket import ConnectionError as SocketConnectionError
 
 agent_conf = '''
@@ -77,6 +78,24 @@ class TestCharm(unittest.TestCase):
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+        # Control socket calls are no-ops by default so tests are hermetic.
+        # SocketNotReadyError must escape event handlers (putting the unit
+        # into error state), so tests that trigger events without mocking
+        # these methods must not hit the real socket. Tests that need
+        # specific behaviour patch the methods themselves.
+        for method in (
+            "add_metrics_user",
+            "remove_metrics_user",
+            "set_charm_tracing_config",
+            "set_workload_tracing_config",
+            "add_s3_config",
+            "remove_s3_config",
+            "set_loki_endpoint",
+            "remove_loki_endpoint",
+        ):
+            patcher = patch(f"controlsocket.ControlSocketClient.{method}")
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_start_sets_active_status(self):
         harness = Harness(JujuControllerCharm)
@@ -1568,7 +1587,9 @@ class TestCharm(unittest.TestCase):
     def test_apiaddresses_missing(self, _):
         harness = self.harness
 
-        with self.assertRaisesRegex(AgentConfException, "agent.conf key 'apiaddresses' missing"):
+        with self.assertRaisesRegex(
+            AgentConfException, "agent.conf key 'apiaddresses' missing"
+        ):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=agent_conf_apiaddresses_not_list)
@@ -2652,6 +2673,157 @@ class TestCharm(unittest.TestCase):
         expected = {'1': '192.168.1.17', '2': '192.168.1.100'}
         self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
         mock_reload_config.assert_called_once()
+
+    # --- SocketNotReadyError error-state tests ---
+    # SocketNotReadyError must escape event handlers uncaught: the hook
+    # fails and Juju puts the unit into error state (and retries the hook
+    # later), instead of the charm swallowing the error or going blocked.
+
+    @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
+    def test_tracing_socket_not_ready_raises(
+        self, mock_set_tracing_config
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_tracing_config.reset_mock()
+        mock_set_tracing_config.side_effect = SocketNotReadyError(
+            "could not connect to socket"
+        )
+
+        relation_id = harness.add_relation("charm-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.update_relation_data(
+                relation_id, "tempo-coordinator", tracing_provider_data()
+            )
+
+        self.assertIsNone(harness.charm._stored.tracing_status_error)
+
+    @patch("controlsocket.ControlSocketClient.set_workload_tracing_config")
+    def test_workload_tracing_socket_not_ready_raises(
+        self, mock_set_workload_tracing_config
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+        mock_set_workload_tracing_config.reset_mock()
+        mock_set_workload_tracing_config.side_effect = SocketNotReadyError(
+            "could not connect to socket"
+        )
+
+        relation_id = harness.add_relation("workload-tracing", "tempo-coordinator")
+        harness.add_relation_unit(relation_id, "tempo-coordinator/0")
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.update_relation_data(
+                relation_id, "tempo-coordinator", tracing_provider_data()
+            )
+
+        self.assertIsNone(harness.charm._stored.workload_tracing_status_error)
+
+    @patch("controlsocket.ControlSocketClient.add_s3_config")
+    def test_s3_credentials_changed_socket_not_ready_raises(self, mock_add_s3_config):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+
+        mock_add_s3_config.side_effect = SocketNotReadyError(
+            "could not connect to socket"
+        )
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.update_relation_data(
+                relation_id,
+                "s3-integrator",
+                {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+            )
+
+        self.assertIsNone(harness.charm._stored.s3_status_error)
+
+    @patch("controlsocket.ControlSocketClient.remove_s3_config")
+    def test_s3_credentials_gone_socket_not_ready_raises(
+        self, mock_remove_s3_config
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk"},
+        )
+
+        harness.charm._stored.s3_status_pending = False
+
+        mock_remove_s3_config.side_effect = SocketNotReadyError(
+            "could not connect to socket"
+        )
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.remove_relation(relation_id)
+
+        self.assertIsNone(harness.charm._stored.s3_status_error)
+
+    @patch(
+        "controlsocket.ControlSocketClient.set_loki_endpoint",
+        side_effect=SocketNotReadyError("could not connect to socket"),
+    )
+    def test_loki_endpoint_socket_not_ready_raises(
+        self, _mock_set_loki
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        relation_id = harness.add_relation("loki-push-api", "loki")
+        harness.add_relation_unit(relation_id, "loki/0")
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.update_relation_data(
+                relation_id,
+                "loki/0",
+                {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
+            )
+
+        self.assertIsNone(harness.charm._stored.loki_status_error)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.add_metrics_user",
+           side_effect=SocketNotReadyError("could not connect to socket"))
+    def test_metrics_endpoint_socket_not_ready_raises(
+        self, mock_add_user, _
+    ):
+        harness = self.harness
+        harness.set_leader(True)
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.add_relation('metrics-endpoint', 'prometheus-k8s')
+
+    @patch("controlsocket.ControlSocketClient.add_s3_config")
+    def test_leader_elected_s3_replay_socket_not_ready_raises(
+        self, mock_add_s3_config
+    ):
+        harness = self.harness
+
+        relation_id = harness.add_relation("s3-backend", "s3-integrator")
+        harness.add_relation_unit(relation_id, "s3-integrator/0")
+        harness.update_relation_data(
+            relation_id,
+            "s3-integrator",
+            {"access-key": "ak", "secret-key": "sk", "bucket": "test-bucket"},
+        )
+
+        mock_add_s3_config.side_effect = SocketNotReadyError(
+            "could not connect to socket"
+        )
+
+        with self.assertRaises(SocketNotReadyError):
+            harness.set_leader(True)
+
+        self.assertIsNone(harness.charm._stored.s3_status_error)
 
 
 class mockNetwork:
