@@ -22,3 +22,6 @@ lint:  ## Lint with ruff, type-check with pyright, and check code spelling with 
 unit:  ## Run unit tests. To provide extra args, use: make unit ARGS='extra_args'
 	PYTHONPATH=src:lib uv run --group dev coverage run --source=src -m unittest -v $(ARGS)
 	uv run --group dev coverage report -m
+
+integration:  ## Run integration tests
+	uv run --group integration pytest tests/integration -v --log-cli-level=INFO

@@ -155,75 +155,55 @@ jobs:
             bootstrap_base: ubuntu@26.04
           - test_name: microk8s
             cloud: microk8s
+            bootstrap_base: ubuntu@24.04
 
     steps:
-    - name: Save charmcraft logs as artifact
-      if: always() && steps.charmcraft.outcome != 'skipped'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-      with:
-        name: charmcraft-upload-logs-${{ matrix.test_name }}
-        path: ~/.local/state/charmcraft/log/
-      continue-on-error: true
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-    - name: Setup LXD
-      if: matrix.cloud == 'lxd'
-      uses: canonical/setup-lxd@8c6a87bfb56aa48f3fb9b830baa18562d8bfd4ee  # 1.0.0
+    - name: Install concierge
+      run: sudo snap install --classic concierge
 
-    - name: Set up MicroK8s
-      if: matrix.cloud == 'microk8s'
-      uses: balchua/microk8s-actions@65ff1f88f8ecd153879a9b6955659f3144b27714  # 0.4.2
-      with:
-        channel: "1.36-strict/stable"
-        addons: '["dns", "hostpath-storage"]'
-
-    - name: Install Juju
-      run: |
-        sudo snap install juju --channel 4.1/stable
+    - name: Prepare with concierge
+      run: sudo concierge prepare -v -c ".github/concierge-${{ matrix.cloud }}.yaml"
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
+      # Concierge's LXD provider registers Juju's "localhost" cloud.
       run: |
-        juju bootstrap lxd c \
+        juju bootstrap localhost "lxd" \
           --bootstrap-base=${{ matrix.bootstrap_base }} \
           --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Bootstrap on MicroK8s
       if: matrix.cloud == 'microk8s'
       run: |
-        sg snap_microk8s <<EOF
-          juju bootstrap microk8s c \
-            --controller-charm-channel=${{ needs.channel.outputs.test }}
-        EOF
+        juju bootstrap microk8s "microk8s" \
+          --controller-charm-channel=${{ needs.channel.outputs.test }}
 
-    - name: Check charm status
+    - name: Install uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+
+    - name: Run integration tests
+      # Make sure we switch to the bootstrapped controller.
       run: |
-        juju switch controller
-        juju status
+        juju switch "${{ matrix.cloud }}:"
+        make integration
 
-        start_time="$(date -u +%s)"
-        until [[ $(juju status --format=json 2>/dev/null | jq -r '.applications.controller["application-status"].current') == "active" ]]; do
-          echo "Waiting for controller to become active..."
-          juju status
-          sleep 10
-
-          elapsed=$(( $(date -u +%s) - start_time ))
-          if [[ ${elapsed} -ge 600 ]]; then
-            echo "Timed out waiting for controller to become active"
-            juju status
-            exit 1
-          fi
-        done
-
-    - name: Get some info for debugging
+    - name: Get Juju info for debugging
       if: failure()
       run: |
         set -x
         set +e
         juju status -m controller
         juju debug-log -m controller --replay
+
+    - name: Get MicroK8s pod info for debugging
+      if: failure() && matrix.cloud == 'microk8s'
+      run: |
         sg snap_microk8s <<EOF
-          microk8s.kubectl -n controller-c get all
-          microk8s.kubectl -n controller-c get -o yaml pod/controller-0
+          microk8s.kubectl -n controller-microk8s get all
+          microk8s.kubectl -n controller-microk8s get -o yaml pod/controller-0
         EOF
 
     # TODO: test integration with dashboard / ha-proxy

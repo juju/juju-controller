@@ -62,5 +62,3 @@ charmcraft pack -v
 ```
 charmcraft fetch-libs
 ```
-
-
