@@ -156,6 +156,9 @@ jobs:
           - test_name: microk8s
             cloud: microk8s
             bootstrap_base: ubuntu@24.04
+          - test_name: k8s
+            cloud: k8s
+            bootstrap_base: ubuntu@24.04
 
     steps:
     - name: Checkout code
@@ -179,6 +182,12 @@ jobs:
       if: matrix.cloud == 'microk8s'
       run: |
         juju bootstrap microk8s "microk8s" \
+          --controller-charm-channel=${{ needs.channel.outputs.test }}
+
+    - name: Bootstrap on Canonical k8s
+      if: matrix.cloud == 'k8s'
+      run: |
+        juju bootstrap k8s "k8s" \
           --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Install uv
@@ -205,5 +214,11 @@ jobs:
           microk8s.kubectl -n controller-microk8s get all
           microk8s.kubectl -n controller-microk8s get -o yaml pod/controller-0
         EOF
+
+    - name: Get Canonical K8s pod info for debugging
+      if: failure() && matrix.cloud == 'k8s'
+      run: |
+        sudo k8s kubectl -n controller-k8s get all
+        sudo k8s kubectl -n controller-k8s get -o yaml pod/controller-0
 
     # TODO: test integration with dashboard / ha-proxy
