@@ -6,7 +6,6 @@ description: |
 summary: |
   The Juju controller.
 type: charm
-
 links:
   issues:
     - https://github.com/juju/juju-controller/issues
@@ -14,7 +13,7 @@ links:
     - https://github.com/juju/juju-controller
 
 assumes:
-- juju >= 4.1
+  - juju >= 4.2
 
 provides:
   dashboard:
