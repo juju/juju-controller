@@ -11,9 +11,8 @@ sudo snap install astral-uv --classic
 Create and activate a virtualenv with the development requirements:
 
 ```
-uv venv
+uv sync --frozen --extra dev
 source .venv/bin/activate
-uv pip install ".[dev]"
 ```
 
 ## Testing
@@ -22,6 +21,17 @@ The Python operator framework includes a very nice harness for testing
 operator behaviour without full deployment. Just `run_tests`:
 
     ./run_tests
+
+The `run_tests` script runs `ruff` lint and format checks. They will report
+error but don't fix any file. To let `ruff` fix trivial errors automatically:
+
+```console
+// Assume the virtualenv has been activated.
+// Run format after check to make sure all fixes from ruff
+// are re-formatted correctly.
+$ ruff check --preview --fix src/ tests/
+$ ruff format --preview src/ tests/
+```
 
 ## Deploying
 
