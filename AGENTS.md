@@ -9,18 +9,38 @@ If guidance conflicts, Juju Hook Lifecycle rules take precedence.
 
 ## Setup
 
-Create and activate a virtualenv, and install the development requirements:
-   
-```
-virtualenv -p python3 venv
-source venv/bin/activate
-uv pip install ".[dev]"
-```
-
 Install `astral-uv` using snaps:
 
 ```
 sudo snap install astral-uv --classic
+```
+
+You also need `make` to run local development tasks (format/lint/unit/integration).
+
+## Local development
+
+To see available make targets:
+```
+make help
+```
+
+To quickly run all quality checks
+
+```
+make all
+```
+
+To run each check separately:
+
+```
+# Formatting
+make format
+
+# Linting
+make lint
+
+# Running unit tests
+make unit
 ```
 
 ## Build
@@ -42,7 +62,3 @@ charmcraft pack -v
 ```
 charmcraft fetch-libs
 ```
-
-## Running Tests
-
-- `./run_tests`

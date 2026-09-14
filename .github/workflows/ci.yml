@@ -11,53 +11,47 @@ env:
 
 jobs:
 
-  unit-tests:
-    name: Unit tests
+  check:
+    name: Lint and run unit tests
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
+    container:
+      image: python:${{ matrix.python }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Check out code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
-        python-version: '3.10'
+        persist-credentials: false
 
     - name: Install uv
-      run: pip install uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-    - name: Create uv virtualenv
-      run: uv venv
+    - name: Run lint
+      run: make lint
 
-    - name: Install dependencies for testing
-      run: |
-        source .venv/bin/activate
-        uv pip install ".[dev]"
-
-    - name: Run tests
-      run: |
-        source .venv/bin/activate
-        ./run_tests
+    - name: Run unit tests
+      run: make unit
 
   build:
     name: Build charm
-    needs: unit-tests
+    needs: [check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.10'
 
       - name: Install uv
-        run: pip install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Set up LXD
-        uses: canonical/setup-lxd@90d76101915da56a42a562ba766b1a77019242fd
+        uses: canonical/setup-lxd@8c6a87bfb56aa48f3fb9b830baa18562d8bfd4ee  # 1.0.0
 
       - name: Add runner to lxd group
         run: |
@@ -72,7 +66,7 @@ jobs:
         run: sg lxd -c "charmcraft pack"
 
       - name: Upload charm artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: charm
           path: "*.charm"
@@ -104,11 +98,11 @@ jobs:
             DO_RELEASE=false  # Don't release feature branches
             ;;
         esac
-        
+
         # Feature branches will be released to the 'latest' track, so we need
         # to include the branch name to disambiguate.
         BRANCH="${{ github.ref_name }}-${{ github.sha }}"
-        
+
         echo "test=$TRACK/edge/$BRANCH" >> "$GITHUB_OUTPUT"
         if [[ "$DO_RELEASE" == 'true' ]]; then
           echo "release=$TRACK/edge" >> "$GITHUB_OUTPUT"
@@ -122,11 +116,11 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Download packed charm
         id: download
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: charm
 
@@ -161,75 +155,70 @@ jobs:
             bootstrap_base: ubuntu@26.04
           - test_name: microk8s
             cloud: microk8s
+            bootstrap_base: ubuntu@24.04
+          - test_name: k8s
+            cloud: k8s
+            bootstrap_base: ubuntu@24.04
 
     steps:
-    - name: Save charmcraft logs as artifact
-      if: always() && steps.charmcraft.outcome != 'skipped'
-      uses: actions/upload-artifact@v4
-      with:
-        name: charmcraft-upload-logs-${{ matrix.test_name }}
-        path: ~/.local/state/charmcraft/log/
-      continue-on-error: true
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-    - name: Setup LXD
-      if: matrix.cloud == 'lxd'
-      uses: canonical/setup-lxd@2fa6235ef2dfd3288e0de09edac03f2ebf922968
+    - name: Install concierge
+      run: sudo snap install --classic concierge
 
-    - name: Set up MicroK8s
-      if: matrix.cloud == 'microk8s'
-      uses: balchua/microk8s-actions@v0.4.2
-      with:
-        channel: "1.36-strict/stable"
-        addons: '["dns", "hostpath-storage"]'
-
-    - name: Install Juju
-      run: |
-        sudo snap install juju --channel 4.0/stable
+    - name: Prepare with concierge
+      run: sudo concierge prepare -v -c ".github/concierge-${{ matrix.cloud }}.yaml"
 
     - name: Bootstrap on LXD
       if: matrix.cloud == 'lxd'
+      # Concierge's LXD provider registers Juju's "localhost" cloud.
       run: |
-        juju bootstrap lxd c \
+        juju bootstrap localhost "lxd" \
           --bootstrap-base=${{ matrix.bootstrap_base }} \
           --controller-charm-channel=${{ needs.channel.outputs.test }}
 
     - name: Bootstrap on MicroK8s
       if: matrix.cloud == 'microk8s'
       run: |
-        sg snap_microk8s <<EOF
-          juju bootstrap microk8s c \
-            --controller-charm-channel=${{ needs.channel.outputs.test }}
-        EOF
+        juju bootstrap microk8s "microk8s" \
+          --controller-charm-channel=${{ needs.channel.outputs.test }}
 
-    - name: Check charm status
+    - name: Bootstrap on Canonical k8s
+      if: matrix.cloud == 'k8s'
       run: |
-        juju switch controller
-        juju status
+        juju bootstrap k8s "k8s" \
+          --controller-charm-channel=${{ needs.channel.outputs.test }}
 
-        start_time="$(date -u +%s)"
-        until [[ $(juju status --format=json 2>/dev/null | jq -r '.applications.controller["application-status"].current') == "active" ]]; do
-          echo "Waiting for controller to become active..."
-          juju status
-          sleep 10
+    - name: Install uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
 
-          elapsed=$(( $(date -u +%s) - start_time ))
-          if [[ ${elapsed} -ge 600 ]]; then
-            echo "Timed out waiting for controller to become active"
-            juju status
-            exit 1
-          fi
-        done
+    - name: Run integration tests
+      # Make sure we switch to the bootstrapped controller.
+      run: |
+        juju switch "${{ matrix.cloud }}:"
+        make integration
 
-    - name: Get some info for debugging
+    - name: Get Juju info for debugging
       if: failure()
       run: |
         set -x
         set +e
         juju status -m controller
         juju debug-log -m controller --replay
+
+    - name: Get MicroK8s pod info for debugging
+      if: failure() && matrix.cloud == 'microk8s'
+      run: |
         sg snap_microk8s <<EOF
-          microk8s.kubectl -n controller-c get all
-          microk8s.kubectl -n controller-c get -o yaml pod/controller-0
+          microk8s.kubectl -n controller-microk8s get all
+          microk8s.kubectl -n controller-microk8s get -o yaml pod/controller-0
         EOF
+
+    - name: Get Canonical K8s pod info for debugging
+      if: failure() && matrix.cloud == 'k8s'
+      run: |
+        sudo k8s kubectl -n controller-k8s get all
+        sudo k8s kubectl -n controller-k8s get -o yaml pod/controller-0
 
     # TODO: test integration with dashboard / ha-proxy

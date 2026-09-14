@@ -6,22 +6,23 @@ sudo snap install charmcraft --classic --channel latest/stable
 sudo snap install astral-uv --classic
 ```
 
-## Setting up the environment
+You also need `make` to run local development tasks.
 
-Create and activate a virtualenv with the development requirements:
+## Local development tasks
 
+Use `make` to run formatting, linting, and testing:
+
+```console
+$ make help
+all             Run lint and unit tests (the default target)
+help            Show this help
+format          Format and auto-fix with ruff
+lint            Lint with ruff, type-check with pyright, and check code spelling with codespell
+unit            Run unit tests. To provide extra args, use: make unit ARGS='extra_args'
+integration     Run integration tests
 ```
-uv venv
-source .venv/bin/activate
-uv pip install ".[dev]"
-```
 
-## Testing
-
-The Python operator framework includes a very nice harness for testing
-operator behaviour without full deployment. Just `run_tests`:
-
-    ./run_tests
+Run `make all` before you push and create a PR.
 
 ## Deploying
 
@@ -55,6 +56,18 @@ $ juju bootstrap microk8s c \
 --controller-charm-path=[new-name]
 --controller-charm-channel=latest/stable
 ```
+
+## Activate local virtualenv
+
+The `make` commands doesn't need an activated virtualenv. If you
+need to activate it for local development:
+
+```
+uv sync --frozen --group dev
+source .venv/bin/activate
+```
+
+The `uv sync` command creates a local virtualenv for you.
 
 ## Releasing
 
