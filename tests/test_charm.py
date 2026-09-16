@@ -2657,6 +2657,69 @@ class TestCharm(unittest.TestCase):
         mock_reload_config.assert_called_once()
 
 
+@patch("controlsocket.ControlSocketClient.set_workload_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_charm_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_loki_endpoint", Mock())
+class TestControllerPorts(unittest.TestCase):
+    """Tests that the charm opens the SSH server port declared in config.
+
+    The SSH server port is a property of the charm and is opened via config.
+    It only becomes reachable once the application is exposed.
+    """
+
+    def setUp(self):
+        # Reconciling ports pushes the SSH server port over the control socket,
+        # which would otherwise try to talk to a real Unix socket. Patch it so
+        # the port tests exercise set_ports in isolation.
+        patcher = patch("controlsocket.ControlSocketClient.set_ssh_server_port")
+        self.mock_set_ssh_server_port = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.harness = Harness(JujuControllerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+
+    def _opened(self):
+        # Return the set of (protocol, port) tuples currently opened.
+        return {(p.protocol, p.port) for p in self.harness.model.unit.opened_ports()}
+
+    def test_default_port_opened_on_config_changed(self):
+        # With default config, the SSH server port is opened.
+        self.harness.charm.on.config_changed.emit()
+
+        self.assertEqual(self._opened(), {("tcp", 17022)})
+
+    def test_custom_port_opened(self):
+        # Changing the port config opens the new port and closes the old one
+        # (set_ports is declarative).
+        self.harness.charm.on.config_changed.emit()
+        self.assertIn(("tcp", 17022), self._opened())
+
+        self.harness.update_config({"ssh-server-port": 17099})
+
+        self.assertEqual(self._opened(), {("tcp", 17099)})
+
+    def test_ssh_server_port_pushed_over_control_socket(self):
+        # Reconciling ports pushes the SSH server port to the controller agent
+        # so it can (re)start the SSH server on the configured port.
+        self.harness.charm.on.config_changed.emit()
+        self.mock_set_ssh_server_port.assert_called_with(17022)
+
+        # Changing the port pushes the new value.
+        self.mock_set_ssh_server_port.reset_mock()
+        self.harness.update_config({"ssh-server-port": 17099})
+        self.mock_set_ssh_server_port.assert_called_with(17099)
+
+    def test_ssh_server_port_socket_error_does_not_break_ports(self):
+        # A control socket failure when pushing the port must not prevent the
+        # ports from being opened; the error is logged and swallowed.
+        self.mock_set_ssh_server_port.side_effect = Exception("socket down")
+
+        self.harness.charm.on.config_changed.emit()
+
+        self.assertEqual(self._opened(), {("tcp", 17022)})
+
+
 class mockNetwork:
     def __init__(self, addresses):
         self.ingress_addresses = [ipaddress.ip_address(addr) for addr in addresses]

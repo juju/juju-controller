@@ -109,6 +109,13 @@ config:
       default: true
       description: Whether this is a standalone Juju controller
       type: boolean
+    ssh-server-port:
+      default: 17022
+      description: |
+        The port on which the controller's embedded SSH server (jump host)
+        listens. The charm opens this port; expose the application (optionally
+        with --to-cidrs) to control access.
+      type: int
     workload-tracing-stack-traces:
       default: false
       description: Whether stack traces should be added per workload tracing span.
