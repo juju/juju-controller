@@ -273,16 +273,25 @@ class JujuControllerCharm(CharmBase):
         restrict access with --to-cidrs.
         """
         desired = [
-            Port('tcp', int(self.config['api-port'])),
             Port('tcp', int(self.config['ssh-server-port'])),
         ]
-        # Port 80 is only needed for the Let's Encrypt HTTP challenge, which
-        # only applies when an autocert DNS name is configured.
-        if self.config['autocert-dns-name']:
-            desired.append(Port('tcp', 80))
 
         logger.info('reconciling controller ports: %r', desired)
         self.unit.set_ports(*desired)
+
+        # Opening the port only makes it reachable through the firewall. The
+        # controller agent (jujud-controler) also needs to know which port to
+        # run the SSH server on. 
+        # 
+        # So we push the value over the control socket so the agent can
+        # [re]start the SSH server on the configured port. A socket failure
+        # here must not prevent port reconciliation, so it is logged and
+        # swallowed.
+        ssh_server_port = int(self.config['ssh-server-port'])
+        try:
+            self._control_socket.set_ssh_server_port(ssh_server_port)
+        except Exception as exc:
+            logger.error("failed to push ssh server port to controller: %s", exc)
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
