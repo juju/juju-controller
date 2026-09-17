@@ -52,6 +52,12 @@ api-addresses:
 ca-cert: fake
 '''
 
+agent_conf = '''
+api-addresses:
+- localhost:17070
+ca-cert: fake
+'''
+
 
 def tracing_provider_data(http_url="http://tempo-http:4318", grpc_url="tempo-grpc:4317"):
     return TracingProviderAppData(
@@ -1568,7 +1574,9 @@ class TestCharm(unittest.TestCase):
     def test_apiaddresses_missing(self, _):
         harness = self.harness
 
-        with self.assertRaisesRegex(AgentConfException, "runtime.conf key 'api-addresses' missing"):
+        with self.assertRaisesRegex(
+            AgentConfException, "runtime.conf key 'api-addresses' missing"
+        ):
             harness.charm.api_port()
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf_api_addresses_not_list)
@@ -1685,7 +1693,7 @@ class TestCharm(unittest.TestCase):
 
         file_path = os.path.join(
             JujuControllerCharm._data_dir(),
-            'agents', 'controller-0', 'controller.conf',
+            'controller.conf',
         )
         self.assertEqual(mock_open.call_count, 2)
 
@@ -2655,6 +2663,65 @@ class TestCharm(unittest.TestCase):
         expected = {'1': '192.168.1.17', '2': '192.168.1.100'}
         self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
         mock_reload_config.assert_called_once()
+
+    @patch.dict(os.environ, {"PEBBLE_SOCKET": "/charm/container/pebble.socket"})
+    def test_snap_topology_not_detected_when_pebble_socket_set(self):
+        self.assertFalse(JujuControllerCharm._is_snap())
+        self.assertEqual(JujuControllerCharm._data_dir(), '/var/lib/juju/controller')
+
+    @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
+    @patch("os.path.exists", return_value=False)
+    def test_caas_topology_detected_via_container_names(self, _):
+        self.assertFalse(JujuControllerCharm._is_snap())
+        self.assertEqual(JujuControllerCharm._data_dir(), '/var/lib/juju/controller')
+
+    @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
+    def test_caas_data_dir(self):
+        self.assertEqual(
+            JujuControllerCharm._data_dir(),
+            '/var/lib/juju/controller',
+        )
+
+    @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
+    def test_caas_sockets_dir(self):
+        self.assertEqual(
+            JujuControllerCharm._sockets_dir(),
+            '/var/lib/juju/controller/sockets',
+        )
+
+    @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
+    def test_caas_controller_config_path(self):
+        self.assertEqual(
+            JujuControllerCharm._controller_config_path(),
+            '/var/lib/juju/controller/controller.conf',
+        )
+
+    @patch.dict(os.environ, {})
+    @patch("os.path.exists", side_effect=lambda p: p == '/var/snap/jujud')
+    def test_snap_data_dir(self, _):
+        self.assertTrue(JujuControllerCharm._is_snap())
+        self.assertEqual(
+            JujuControllerCharm._data_dir(),
+            '/var/snap/jujud/common',
+        )
+
+    @patch.dict(os.environ, {})
+    @patch("os.path.exists", side_effect=lambda p: p == '/var/snap/jujud')
+    def test_snap_sockets_dir(self, _):
+        self.assertTrue(JujuControllerCharm._is_snap())
+        self.assertEqual(
+            JujuControllerCharm._sockets_dir(),
+            '/var/snap/jujud/common/sockets',
+        )
+
+    @patch.dict(os.environ, {})
+    @patch("os.path.exists", side_effect=lambda p: p == '/var/snap/jujud')
+    def test_snap_controller_config_path(self, _):
+        self.assertTrue(JujuControllerCharm._is_snap())
+        self.assertEqual(
+            JujuControllerCharm._controller_config_path(),
+            '/var/snap/jujud/common/controller.conf',
+        )
 
 
 class mockNetwork:

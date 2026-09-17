@@ -53,20 +53,12 @@ class JujuControllerCharm(CharmBase):
         """Return the root data directory for the running controller."""
         if cls._is_snap():
             return '/var/snap/jujud/common'
-        # In CAAS, jujud's EffectiveSocketDir falls back to DataDir (e.g. /var/lib/juju)
-        env_dir = os.environ.get('JUJU_DATA_DIR')
-        if env_dir:
-            return env_dir
-        return '/var/lib/juju'
+        return '/var/lib/juju/controller'
 
     @classmethod
     def _sockets_dir(cls) -> str:
         """Return the directory containing control.socket and configchange.socket."""
-        # In snap mode sockets live under common/sockets; in CAAS they are at
-        # the data dir root (EffectiveSocketDir==DataDir when SocketDir is empty).
-        if cls._is_snap():
-            return os.path.join(cls._data_dir(), 'sockets')
-        return cls._data_dir()
+        return os.path.join(cls._data_dir(), 'sockets')
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -585,9 +577,9 @@ class JujuControllerCharm(CharmBase):
         try:
             ips = [str(ip) for ip in self.model.get_binding(relation).network.ingress_addresses]
         except ValueError:
-            # In CAAS, ingress addresses may be Kubernetes service hostnames
-            # rather than IPs. Dqlite clustering is not used in CAAS, so
-            # skip setting the bind address.
+            # In Kubernetes, ingress addresses may be Kubernetes service
+            # hostnames rather than IPs. Dqlite clustering is not used in
+            # Kubernetes, so skip setting the bind address.
             logger.warning(
                 "cannot resolve db bind address: ingress addresses are not IPs; "
                 "skipping dbcluster configuration")
@@ -644,25 +636,23 @@ class JujuControllerCharm(CharmBase):
         """Read a value (by key) from the runtime.conf file on disk.
 
         In snap mode the file is read from the current revision symlink;
-        in CAAS mode it is read from the agent config directory.
+        in Kubernetes mode it is read from the controller directory.
         """
         if self._is_snap():
-            runtime_conf_path = '/var/snap/jujud/current/agents/controller-0/runtime.conf'
+            runtime_conf_path = '/var/snap/jujud/current/runtime.conf'
         else:
             runtime_conf_path = os.path.join(
-                self._data_dir(), 'agents', 'controller-0', 'runtime.conf',
+                self._data_dir(), 'runtime.conf',
             )
         with open(runtime_conf_path) as runtime_conf_file:
             runtime_conf = yaml.safe_load(runtime_conf_file) or {}
             return runtime_conf.get(key)
 
-    def _controller_config_path(self) -> str:
-        """Interrogate the running controller jujud service to determine
-        the local controller ID, then use it to construct a config path.
-        """
-        controller_id = self._controller_agent_id()
+    @classmethod
+    def _controller_config_path(cls) -> str:
+        """Return the path to the controller configuration file."""
         return os.path.join(
-            self._data_dir(), 'agents', f'controller-{controller_id}', 'controller.conf',
+            cls._data_dir(), 'controller.conf',
         )
 
     def _controller_agent_id(self):
