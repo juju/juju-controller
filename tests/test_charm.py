@@ -2667,13 +2667,13 @@ class TestCharm(unittest.TestCase):
     @patch.dict(os.environ, {"PEBBLE_SOCKET": "/charm/container/pebble.socket"})
     def test_snap_topology_not_detected_when_pebble_socket_set(self):
         self.assertFalse(JujuControllerCharm._is_snap())
-        self.assertTrue(JujuControllerCharm._is_k8s())
+        self.assertEqual(JujuControllerCharm._data_dir(), '/var/lib/juju/controller')
 
     @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
     @patch("os.path.exists", return_value=False)
     def test_caas_topology_detected_via_container_names(self, _):
         self.assertFalse(JujuControllerCharm._is_snap())
-        self.assertTrue(JujuControllerCharm._is_k8s())
+        self.assertEqual(JujuControllerCharm._data_dir(), '/var/lib/juju/controller')
 
     @patch.dict(os.environ, {"JUJU_CONTAINER_NAMES": "api-server"})
     def test_caas_data_dir(self):

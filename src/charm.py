@@ -49,32 +49,16 @@ class JujuControllerCharm(CharmBase):
         return os.path.exists('/var/snap/jujud')
 
     @classmethod
-    def _is_k8s(cls) -> bool:
-        """Return True when running inside a Kubernetes controller pod."""
-        return not cls._is_snap() and (
-            'PEBBLE_SOCKET' in os.environ or os.environ.get('JUJU_CONTAINER_NAMES') is not None
-        )
-
-    @classmethod
     def _data_dir(cls) -> str:
         """Return the root data directory for the running controller."""
         if cls._is_snap():
             return '/var/snap/jujud/common'
-        if cls._is_k8s():
-            return '/var/lib/juju/controller'
-        env_dir = os.environ.get('JUJU_DATA_DIR')
-        if env_dir:
-            return env_dir
-        return '/var/lib/juju'
+        return '/var/lib/juju/controller'
 
     @classmethod
     def _sockets_dir(cls) -> str:
         """Return the directory containing control.socket and configchange.socket."""
-        if cls._is_snap():
-            return os.path.join(cls._data_dir(), 'sockets')
-        if cls._is_k8s():
-            return os.path.join(cls._data_dir(), 'sockets')
-        return cls._data_dir()
+        return os.path.join(cls._data_dir(), 'sockets')
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -656,10 +640,6 @@ class JujuControllerCharm(CharmBase):
         """
         if self._is_snap():
             runtime_conf_path = '/var/snap/jujud/current/runtime.conf'
-        elif self._is_k8s():
-            runtime_conf_path = os.path.join(
-                self._data_dir(), 'runtime.conf',
-            )
         else:
             runtime_conf_path = os.path.join(
                 self._data_dir(), 'runtime.conf',
