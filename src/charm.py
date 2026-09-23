@@ -8,6 +8,7 @@ import os
 import secrets
 import urllib.parse
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
@@ -298,8 +299,9 @@ class JujuControllerCharm(CharmBase):
     def _on_website_relation_joined(self, event):
         """Connect a website relation."""
         logger.info("got a new website relation: %r", event)
-        port = self.api_port()
-        if port is None:
+        try:
+            port = self.api_port()
+        except AgentConfException:
             logger.error("machine does not appear to be a controller")
             self.unit.status = BlockedStatus("machine does not appear to be a controller")
             return
@@ -344,6 +346,8 @@ class JujuControllerCharm(CharmBase):
             )
             logger.error("cannot read controller API port from agent configuration: %s", e)
             return None
+
+        ca_cert = self.ca_cert()
         return [
             {
                 "metrics_path": "/introspection/metrics",
@@ -354,7 +358,7 @@ class JujuControllerCharm(CharmBase):
                     "password": password,
                 },
                 "tls_config": {
-                    "ca_file": self.ca_cert(),
+                    "ca_file": ca_cert if ca_cert is not None else "",
                     "server_name": "juju-apiserver",
                 },
             }
@@ -623,7 +627,7 @@ class JujuControllerCharm(CharmBase):
         self._request_config_reload()
         self._stored.all_bind_addresses = bind_addresses
 
-    def api_port(self) -> str:
+    def api_port(self) -> int:
         """Return the port on which the controller API server is listening."""
         api_addresses = self._controller_runtime_config("api-addresses")
         if not api_addresses:
@@ -632,15 +636,19 @@ class JujuControllerCharm(CharmBase):
             raise AgentConfException("runtime.conf key 'api-addresses' is not a list")
 
         parsed_url = urllib.parse.urlsplit("//" + api_addresses[0])
-        if not parsed_url.port:
+        if parsed_url.port is None:
             raise AgentConfException("API address does not include port")
         return parsed_url.port
 
-    def ca_cert(self) -> str:
+    def ca_cert(self) -> str | None:
         """Return the controller's CA certificate."""
-        return self._controller_runtime_config("ca-cert")
+        ca_cert = self._controller_runtime_config("ca-cert")
+        if ca_cert is None or not isinstance(ca_cert, str):
+            return None
 
-    def _controller_runtime_config(self, key: str):
+        return ca_cert
+
+    def _controller_runtime_config(self, key: str) -> Any | None:
         """Read a value (by key) from the runtime.conf file on disk.
 
         In snap mode the file is read from the current revision symlink;
@@ -720,10 +728,10 @@ class JujuControllerCharm(CharmBase):
         sample_ratio = float(self.config["workload-tracing-sample-ratio"])
         self._validate_open_telemetry_sample_ratio(sample_ratio)
         return (
-            self.config["workload-tracing-stack-traces"],
+            cast(bool, self.config["workload-tracing-stack-traces"]),
             sample_ratio,
-            self.config["workload-tracing-tail-sampling-threshold"],
-            self.config["workload-tracing-insecure-skip-verify"],
+            cast(str, self.config["workload-tracing-tail-sampling-threshold"]),
+            cast(bool, self.config["workload-tracing-insecure-skip-verify"]),
         )
 
     def _current_s3_config(self):

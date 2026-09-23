@@ -2,7 +2,7 @@
 # Copyright 2023 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 import logging
-import urllib
+import urllib.request
 
 import unixsocket
 from unixsocket import APIError  # noqa: F401, re-exported for charm.py
@@ -63,7 +63,7 @@ class ControlSocketClient(unixsocket.SocketClient):
         insecure_skip_verify: bool | None = None,
     ):
         """Set the tracing configuration for the controller workload."""
-        body = {
+        body: dict[str, str | bool | float | None] = {
             "grpc_endpoint": grpc_endpoint,
             "http_endpoint": http_endpoint,
             "ca_cert": ca_cert,

@@ -2,7 +2,7 @@
 # Copyright 2023 Canonical Ltd.
 # Licensed under the GPLv3, see LICENSE file for details.
 import logging
-import urllib
+import urllib.request
 
 import unixsocket
 
