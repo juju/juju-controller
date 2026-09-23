@@ -7,6 +7,7 @@ import os
 import unittest
 from unittest.mock import Mock, mock_open, patch
 
+import ops
 import yaml
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     ProviderApplicationData,
@@ -17,7 +18,6 @@ from charms.tempo_coordinator_k8s.v0.tracing import (
     TracingProviderAppData,
     TransportProtocolType,
 )
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.testing import Harness
 
 from charm import AgentConfException, JujuControllerCharm
@@ -89,7 +89,7 @@ class TestCharm(unittest.TestCase):
         self.addCleanup(harness.cleanup)
         harness.begin()
         harness.charm.on.start.emit()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     def test_dashboard_relation_joined(self):
         harness = self.harness
@@ -546,7 +546,7 @@ class TestCharm(unittest.TestCase):
         mock_set_tracing_config.assert_not_called()
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
             "charm tracing endpoint requires a CA cert, but none is available",
@@ -588,7 +588,7 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -609,7 +609,7 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(harness.charm.unit.status.message, "failed to set charm tracing config")
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
@@ -635,7 +635,7 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -887,7 +887,7 @@ class TestCharm(unittest.TestCase):
         mock_set_workload_tracing_config.assert_not_called()
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
             "invalid workload-tracing-sample-ratio: must be between 0 and 1",
@@ -930,7 +930,7 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch(
@@ -962,7 +962,7 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
             "failed to set workload tracing config",
@@ -998,7 +998,7 @@ class TestCharm(unittest.TestCase):
         harness.update_config({"workload-tracing-stack-traces": True})
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
         mock_set_charm_tracing_config.assert_not_called()
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
@@ -1164,7 +1164,7 @@ class TestCharm(unittest.TestCase):
         mock_set_workload_tracing_config.assert_not_called()
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
             "workload tracing endpoint requires a CA cert, but none is available",
@@ -1213,7 +1213,7 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -1276,7 +1276,7 @@ class TestCharm(unittest.TestCase):
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message, "failed to set workload tracing config"
         )
@@ -1315,7 +1315,7 @@ class TestCharm(unittest.TestCase):
         harness.remove_relation(relation_id)
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("controlsocket.ControlSocketClient.set_charm_tracing_config")
@@ -1405,7 +1405,7 @@ class TestCharm(unittest.TestCase):
         )
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status.message,
             "invalid workload-tracing-sample-ratio: must be between 0 and 1",
@@ -1572,10 +1572,10 @@ class TestCharm(unittest.TestCase):
 
         harness.add_relation("metrics-endpoint", "prometheus-k8s")
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertEqual(
             harness.charm.unit.status,
-            BlockedStatus(
+            ops.BlockedStatus(
                 "cannot read controller API port from agent configuration: "
                 "runtime.conf key 'api-addresses' missing"
             ),
@@ -1631,7 +1631,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(json.loads(app_data["db-bind-addresses"]), exp)
 
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("builtins.open", new_callable=mock_open, read_data=runtime_conf)
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
@@ -1652,7 +1652,7 @@ class TestCharm(unittest.TestCase):
         )
 
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         mock_reload_config.assert_called_once()
 
     @patch("configchangesocket.ConfigChangeSocketClient.get_controller_agent_id")
@@ -1744,7 +1744,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(json.loads(app_data["db-bind-addresses"]), exp)
 
         harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch("controlsocket.ControlSocketClient.add_s3_config")
     def test_s3_relation_credentials_changed(self, mock_add_s3_config):
@@ -1778,7 +1778,7 @@ class TestCharm(unittest.TestCase):
         mock_add_s3_config.assert_called_once_with(expected_credentials)
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.MaintenanceStatus)
 
     @patch("controlsocket.ControlSocketClient.add_s3_config")
     def test_s3_status_pending_clears_after_collect(self, mock_add_s3_config):
@@ -1810,11 +1810,11 @@ class TestCharm(unittest.TestCase):
 
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.MaintenanceStatus)
 
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.ActiveStatus)
 
     @patch(
         "controlsocket.ControlSocketClient.add_s3_config",
@@ -1837,7 +1837,7 @@ class TestCharm(unittest.TestCase):
 
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn(
             "failed to apply s3 config",
             harness.charm.unit.status.message,
@@ -1962,7 +1962,7 @@ class TestCharm(unittest.TestCase):
         harness.charm._stored.workload_tracing_status_error = None
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn("failed to reapply s3 config", harness.charm.unit.status.message)
 
     @patch("controlsocket.ControlSocketClient.add_s3_config")
@@ -2005,7 +2005,7 @@ class TestCharm(unittest.TestCase):
         })
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.MaintenanceStatus)
 
     def test_s3_relation_sets_bucket_on_join(self):
         harness = self.harness
@@ -2083,7 +2083,7 @@ class TestCharm(unittest.TestCase):
 
         with patch.object(harness.charm, "api_port", return_value=17070):
             harness.evaluate_status()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn("failed to remove s3 config", harness.charm.unit.status.message)
 
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -2106,7 +2106,7 @@ class TestCharm(unittest.TestCase):
             "insecure_skip_verify": False,
             "org_id": "",
         })
-        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.MaintenanceStatus)
         self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
 
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -2209,7 +2209,7 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_loki_endpoint.assert_not_called()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn(
             "loki endpoint requires a CA cert, but none is available",
             harness.charm.unit.status.message,
@@ -2230,7 +2230,7 @@ class TestCharm(unittest.TestCase):
         )
 
         mock_set_loki_endpoint.assert_not_called()
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn(
             "loki endpoint requires a CA cert, but none is available",
             harness.charm.unit.status.message,
@@ -2269,7 +2269,7 @@ class TestCharm(unittest.TestCase):
             "insecure_skip_verify": False,
             "org_id": "",
         })
-        self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.MaintenanceStatus)
         self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
 
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
@@ -2344,7 +2344,7 @@ class TestCharm(unittest.TestCase):
             {"endpoint": json.dumps({"url": "http://loki:3100/loki/api/v1/push"})},
         )
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn("failed to apply loki endpoint", harness.charm.unit.status.message)
 
     @patch("controlsocket.ControlSocketClient.remove_loki_endpoint")
@@ -2396,7 +2396,7 @@ class TestCharm(unittest.TestCase):
 
         harness.remove_relation(relation_id)
 
-        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIsInstance(harness.charm.unit.status, ops.BlockedStatus)
         self.assertIn("failed to remove loki endpoint", harness.charm.unit.status.message)
 
     @patch(

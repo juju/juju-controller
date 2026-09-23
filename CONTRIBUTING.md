@@ -11,9 +11,8 @@ sudo snap install astral-uv --classic
 Create and activate a virtualenv with the development requirements:
 
 ```
-uv venv
+uv sync --frozen --extra dev
 source .venv/bin/activate
-uv pip install ".[dev]"
 ```
 
 ## Testing
