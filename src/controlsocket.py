@@ -115,3 +115,17 @@ class ControlSocketClient(unixsocket.SocketClient):
             path='/loki-endpoint',
         )
         logger.debug('result of remove_loki_endpoint request: %r', resp)
+
+    def set_ssh_server_port(self, port: int):
+        """Push the SSH server port to the controller agent.
+
+        The controller agent (jujud) runs the SSH proxy server; the port it
+        listens on is a property of this charm's config. This tells the agent
+        the current value so it can (re)start the SSH server on the right port.
+        """
+        resp = self.json_request(
+            method='POST',
+            path='/ssh-server-port',
+            body={"port": port},
+        )
+        logger.debug('result of set_ssh_server_port request: %r', resp)
