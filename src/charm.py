@@ -12,6 +12,7 @@ import yaml
 from unixsocket import APIError
 
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -65,6 +66,7 @@ class JujuControllerCharm(CharmBase):
         )
         self._s3 = S3Requirer(self, "s3-backend")
         self._loki_consumer = LokiPushApiConsumer(self, "loki-push-api")
+        self._grafana_dashboard = GrafanaDashboardProvider(self)
         self.loki_certificate_transfer = CertificateTransferRequires(
             self, relationship_name="loki-push-api-ca-cert"
         )

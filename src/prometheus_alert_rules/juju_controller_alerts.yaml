@@ -1,0 +1,57 @@
+groups:
+  - name: juju-controller
+    rules:
+      - alert: JujuControllerMetricsUnavailable
+        expr: up{%%juju_topology%%,juju_model="controller",juju_application="controller"} == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Juju controller metrics unavailable
+          description: The controller API metrics endpoint on {{ $labels.juju_unit }} has been unreachable for five minutes.
+
+      - alert: JujuControllerHighAPIErrorRate
+        expr: |
+          sum by (juju_model, juju_model_uuid, juju_application) (
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller",error_code="error"}[5m])
+          )
+          /
+          sum by (juju_model, juju_model_uuid, juju_application) (
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+          ) > 0.05
+          and
+          sum by (juju_model, juju_model_uuid, juju_application) (
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Juju controller API error rate is high
+          description: More than 5% of API requests have failed for ten minutes while request traffic exceeds one request per second.
+
+      - alert: JujuControllerDatabaseErrors
+        expr: |
+          sum by (juju_model, juju_model_uuid, juju_application) (
+            rate(juju_db_errors_total{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Juju controller database errors
+          description: Database errors have exceeded one every ten seconds for ten minutes.
+
+      - alert: JujuControllerDatabaseSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, juju_model, juju_model_uuid, juju_application) (
+              rate(juju_db_duration_seconds_bucket{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+            )
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Juju controller database requests are slow
+          description: The 95th percentile database request duration has exceeded one second for ten minutes.

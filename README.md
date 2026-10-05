@@ -35,3 +35,17 @@ Then, run
 juju dashboard --browser
 ```
 and log in using the printed credentials.
+
+## Observability
+
+Integrate `controller:metrics-endpoint` with Prometheus to scrape the
+controller API metrics and install the bundled Prometheus alert rules.
+Integrate `controller:grafana-dashboard` with Grafana to install the Juju
+Controller dashboard. The dashboard shows API traffic and errors, active
+connections, database request health, and Go runtime metrics. Both
+integrations can use cross-model offers when the observability stack is in a
+different model.
+
+The Grafana dashboard uses the Prometheus datasource supplied by the
+observability stack. The existing `dashboard` endpoint is for the separate
+Juju Dashboard application.
