@@ -99,7 +99,8 @@ class TestCharm(unittest.TestCase):
         harness.charm.on.start.emit()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    def test_dashboard_relation_joined(self):
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_dashboard_relation_joined(self, *_):
         harness = self.harness
 
         harness.set_leader(True)
@@ -2270,9 +2271,10 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
         self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_loki_push_api_https_endpoint_applies_with_insecure_skip_verify(
-        self, mock_set_loki_endpoint
+        self, mock_set_loki_endpoint, *_
     ):
         harness = self.harness
         harness.set_leader(True)
@@ -2647,6 +2649,12 @@ class TestControllerPorts(unittest.TestCase):
         self.mock_set_ssh_server_port = patcher.start()
         self.addCleanup(patcher.stop)
 
+        # The SSH server port is checked against the API port, read from
+        # agent.conf. Put the API server on 17070.
+        patcher = patch.object(JujuControllerCharm, "api_port", return_value=17070)
+        self.mock_api_port = patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
@@ -2705,10 +2713,9 @@ class TestControllerPorts(unittest.TestCase):
 
         self.assertEqual(self._opened(), set())
 
-    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
-    def test_ssh_server_port_colliding_with_api_port_blocks(self, _):
-        # agent_conf puts the API server on 17070. A colliding SSH server port
-        # is neither pushed nor opened, and the unit is blocked.
+    def test_ssh_server_port_colliding_with_api_port_blocks(self):
+        # The API server is on 17070. A colliding SSH server port is neither
+        # pushed nor opened, and the unit is blocked.
         self.harness.update_config({"ssh-server-port": 17070})
 
         self.mock_set_ssh_server_port.assert_not_called()
@@ -2719,6 +2726,33 @@ class TestControllerPorts(unittest.TestCase):
             self.harness.charm.unit.status.message,
             "ssh-server-port 17070 collides with the controller API port",
         )
+
+    def test_ssh_server_port_out_of_range_blocks(self):
+        # An out-of-range SSH server port is neither pushed nor opened, and
+        # the unit is blocked.
+        for port in (0, -1, 65536):
+            self.harness.update_config({"ssh-server-port": port})
+
+            self.mock_set_ssh_server_port.assert_not_called()
+            self.assertEqual(self._opened(), set())
+            self.harness.evaluate_status()
+            self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+            self.assertEqual(
+                self.harness.charm.unit.status.message,
+                f"ssh-server-port {port} is not a valid port (1-65535)",
+            )
+
+    def test_unreadable_agent_conf_fails_hook(self):
+        # Without the API port the collision check can't run, so the hook
+        # fails rather than pushing a possibly colliding port.
+        self.mock_api_port.side_effect = AgentConfException(
+            "agent.conf key 'apiaddresses' missing")
+
+        with self.assertRaises(AgentConfException):
+            self.harness.update_config({"ssh-server-port": 17099})
+
+        self.mock_set_ssh_server_port.assert_not_called()
+        self.assertEqual(self._opened(), set())
 
 
 class mockNetwork:
