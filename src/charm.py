@@ -224,7 +224,8 @@ class JujuControllerCharm(CharmBase):
                 f'cannot read controller API port from agent configuration: {e}'))
             has_blocking_status = True
         else:
-            ssh_server_port_error = self._ssh_server_port_error(api_port)
+            ssh_server_port = int(self.config.get('ssh-server-port') or 0)
+            ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, api_port)
             if ssh_server_port_error:
                 event.add_status(BlockedStatus(ssh_server_port_error))
                 has_blocking_status = True
@@ -265,17 +266,17 @@ class JujuControllerCharm(CharmBase):
         declarative set_ports so that any previously-opened port not in the
         desired set is closed.
         """
+        ssh_server_port = int(self.config.get('ssh-server-port') or 0)
+
         # An unreadable agent configuration fails the hook rather than skipping
         # the collision check.
-        ssh_server_port_error = self._ssh_server_port_error(self.api_port())
+        ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, self.api_port())
         if ssh_server_port_error:
             # The error is reported as a blocked status. Leave the SSH server
             # and the opened ports as they are rather than pushing an invalid
             # port to the controller agent.
             logger.warning(ssh_server_port_error)
             return
-
-        ssh_server_port = int(self.config['ssh-server-port'])
 
         # Push the port to the controller agent so it [re]starts the SSH
         # server on it, before opening it. A failed push fails the hook, so
@@ -287,13 +288,12 @@ class JujuControllerCharm(CharmBase):
         logger.info('reconciling controller ports: %r', desired)
         self.unit.set_ports(*desired)
 
-    def _ssh_server_port_error(self, api_port: int) -> Optional[str]:
-        """Return why the configured SSH server port can't be used, or None.
+    def _ssh_server_port_error(self, ssh_server_port: int, api_port: int) -> Optional[str]:
+        """Return why the SSH server port can't be used, or None.
 
         The port must be a valid TCP port and must not collide with the
         controller API port.
         """
-        ssh_server_port = int(self.config['ssh-server-port'])
         if not 1 <= ssh_server_port <= 65535:
             return f'ssh-server-port {ssh_server_port} is not a valid port (1-65535)'
         if ssh_server_port == api_port:
