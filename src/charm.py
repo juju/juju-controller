@@ -14,6 +14,10 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.data_platform_libs.v0.s3 import CredentialsChangedEvent, S3Requirer
+from charms.grafana_k8s.v0.grafana_dashboard import (
+    GrafanaDashboardEvent,
+    GrafanaDashboardProvider,
+)
 from charms.loki_k8s.v1.loki_push_api import LokiPushApiConsumer
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
@@ -77,6 +81,7 @@ class JujuControllerCharm(CharmBase):
         )
         self._s3 = S3Requirer(self, "s3-backend")
         self._loki_consumer = LokiPushApiConsumer(self, "loki-push-api")
+        self._grafana_dashboard = GrafanaDashboardProvider(self)
         self.loki_certificate_transfer = CertificateTransferRequires(
             self, relationship_name="loki-push-api-ca-cert"
         )
@@ -85,9 +90,9 @@ class JujuControllerCharm(CharmBase):
             last_bind_addresses=[],
             tracing_status_error=None,
             workload_tracing_status_error=None,
-            s3_status_error=None,
             s3_status_pending=False,
             loki_status_error=None,
+            grafana_status_error=None,
             loki_endpoint_seen=False,
         )
 
@@ -135,6 +140,11 @@ class JujuControllerCharm(CharmBase):
         )
         self.framework.observe(
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken
+        )
+
+        self.framework.observe(
+            self._grafana_dashboard.on.dashboard_status_changed,
+            self._on_grafana_dashboard_status_changed,
         )
 
         # DB cluster relation events are observed to maintain the current set of
@@ -227,14 +237,8 @@ class JujuControllerCharm(CharmBase):
             return
         self._stored.s3_status_pending = True
 
-        try:
-            logger.info("reapplying S3 config after leadership change")
-            self._control_socket.add_s3_config(config)
-            self._stored.s3_status_error = None
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to reapply S3 config after leadership change: %s", exc)
-            self._stored.s3_status_pending = False
-            self._stored.s3_status_error = "failed to reapply s3 config"
+        logger.info("reapplying S3 config after leadership change")
+        self._control_socket.add_s3_config(config)
 
     def _on_collect_status(self, event: CollectStatusEvent):
         has_blocking_status = False
@@ -262,12 +266,12 @@ class JujuControllerCharm(CharmBase):
             event.add_status(BlockedStatus(self._stored.workload_tracing_status_error))
             has_blocking_status = True
 
-        if self._stored.s3_status_error:
-            event.add_status(BlockedStatus(self._stored.s3_status_error))
-            has_blocking_status = True
-
         if self._stored.loki_status_error:
             event.add_status(BlockedStatus(self._stored.loki_status_error))
+            has_blocking_status = True
+
+        if self._stored.grafana_status_error:
+            event.add_status(BlockedStatus(self._stored.grafana_status_error))
             has_blocking_status = True
 
         if self._stored.s3_status_pending:
@@ -362,8 +366,6 @@ class JujuControllerCharm(CharmBase):
 
     def _configure_metrics_endpoint(self, username, password):
         jobs = self._metrics_jobs(username, password)
-        if jobs is None:
-            return
         try:
             if self._metrics_endpoint is None:
                 self._metrics_endpoint = MetricsEndpointProvider(self, jobs=jobs)
@@ -623,7 +625,7 @@ class JujuControllerCharm(CharmBase):
         self._request_config_reload()
         self._stored.all_bind_addresses = bind_addresses
 
-    def api_port(self) -> str:
+    def api_port(self) -> int:
         """Return the port on which the controller API server is listening."""
         api_addresses = self._controller_runtime_config("api-addresses")
         if not api_addresses:
@@ -765,16 +767,12 @@ class JujuControllerCharm(CharmBase):
             self.unit.status = BlockedStatus(self._stored.tracing_status_error)
             return
 
-        try:
-            self._control_socket.set_charm_tracing_config(
-                grpc_endpoint=grpc_endpoint,
-                http_endpoint=http_endpoint,
-                ca_cert=ca_cert,
-            )
-            self._stored.tracing_status_error = None
-        except Exception as exc:
-            logger.error("failed to set charm tracing config: %s", exc)
-            self._stored.tracing_status_error = "failed to set charm tracing config"
+        self._control_socket.set_charm_tracing_config(
+            grpc_endpoint=grpc_endpoint,
+            http_endpoint=http_endpoint,
+            ca_cert=ca_cert,
+        )
+        self._stored.tracing_status_error = None
 
     def _update_workload_tracing_config(self, allow_endpoint_only=False):
         """Update workload tracing configuration with current endpoint and CA cert information."""
@@ -782,9 +780,6 @@ class JujuControllerCharm(CharmBase):
             return
 
         grpc_endpoint, http_endpoint, ca_cert = self._current_workload_tracing_config()
-        open_telemetry_config = {}
-        had_invalid_open_telemetry_config = False
-        insecure_skip_verify = False
         try:
             (
                 open_telemetry_stack_traces,
@@ -801,9 +796,10 @@ class JujuControllerCharm(CharmBase):
         except ValueError as exc:
             logger.error("%s", exc)
             self._stored.workload_tracing_status_error = str(exc)
-            had_invalid_open_telemetry_config = True
             if not allow_endpoint_only:
                 return
+            open_telemetry_config = None
+            insecure_skip_verify = False
 
         if (
             any(
@@ -813,25 +809,20 @@ class JujuControllerCharm(CharmBase):
             and not ca_cert
             and not insecure_skip_verify
         ):
-            if not had_invalid_open_telemetry_config:
+            if open_telemetry_config is not None:
                 self._stored.workload_tracing_status_error = (
                     "workload tracing endpoint requires a CA cert, but none is available"
                 )
-            self.unit.status = BlockedStatus(self._stored.workload_tracing_status_error)
             return
 
-        try:
-            self._control_socket.set_workload_tracing_config(
-                grpc_endpoint=grpc_endpoint,
-                http_endpoint=http_endpoint,
-                ca_cert=ca_cert,
-                **open_telemetry_config,
-            )
-            if open_telemetry_config:
-                self._stored.workload_tracing_status_error = None
-        except Exception as exc:
-            logger.error("failed to set workload tracing config: %s", exc)
-            self._stored.workload_tracing_status_error = "failed to set workload tracing config"
+        self._control_socket.set_workload_tracing_config(
+            grpc_endpoint=grpc_endpoint,
+            http_endpoint=http_endpoint,
+            ca_cert=ca_cert,
+            **(open_telemetry_config or {}),
+        )
+        if open_telemetry_config is not None:
+            self._stored.workload_tracing_status_error = None
 
     def _on_s3_credentials_changed(self, _event: CredentialsChangedEvent):
         """Handle new or updated S3 config."""
@@ -843,14 +834,8 @@ class JujuControllerCharm(CharmBase):
             return
 
         self._stored.s3_status_pending = True
-        try:
-            logger.info("applying new S3 config")
-            self._control_socket.add_s3_config(config)
-            self._stored.s3_status_error = None
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to apply S3 config: %s", exc)
-            self._stored.s3_status_pending = False
-            self._stored.s3_status_error = "failed to apply s3 config"
+        logger.info("applying new S3 config")
+        self._control_socket.add_s3_config(config)
 
     def _on_s3_credentials_gone(self, _event):
         """Handle removal of S3 config."""
@@ -859,19 +844,29 @@ class JujuControllerCharm(CharmBase):
 
         try:
             self._control_socket.remove_s3_config()
-            self._stored.s3_status_error = None
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to remove S3 config: %s", exc)
-            self._stored.s3_status_error = "failed to remove s3 config"
+        except APIError as exc:
+            if exc.code != 404:
+                raise
 
     def _on_loki_push_api_endpoint_joined(self, _event):
         """Handle new or updated Loki push API endpoint."""
         self._stored.loki_endpoint_seen = bool(self.model.relations["loki-push-api"])
+        if not self._loki_consumer.loki_endpoints:
+            return
         self._reconcile_loki_endpoint(report_applying_status=True)
 
     def _on_loki_push_api_endpoint_departed(self, _event):
         """Handle removal of Loki push API endpoint."""
         self._reconcile_loki_endpoint()
+
+    def _on_grafana_dashboard_status_changed(self, event: GrafanaDashboardEvent):
+        """Surface dashboard validation failures reported by Grafana."""
+        if event.valid and not event.errors:
+            self._stored.grafana_status_error = None
+            return
+
+        error_message = event.error_message or "dashboard validation failed"
+        self._stored.grafana_status_error = f"grafana dashboard error: {error_message}"
 
     def _on_receive_loki_ca_cert_updated(self, event):
         ca_list = event.certificates
@@ -918,16 +913,11 @@ class JujuControllerCharm(CharmBase):
 
         endpoint = self._current_loki_endpoint()
         if endpoint:
-            try:
-                logger.info("applying Loki push API endpoint")
-                self._control_socket.set_loki_endpoint(endpoint)
-                self._stored.loki_status_error = None
-                if report_applying_status:
-                    self.unit.status = MaintenanceStatus("applying loki endpoint")
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.error("failed to apply Loki endpoint: %s", exc)
-                self._stored.loki_status_error = "failed to apply loki endpoint"
-                self.unit.status = BlockedStatus(self._stored.loki_status_error)
+            logger.info("applying Loki push API endpoint")
+            self._control_socket.set_loki_endpoint(endpoint)
+            self._stored.loki_status_error = None
+            if report_applying_status:
+                self.unit.status = MaintenanceStatus("applying loki endpoint")
             return
 
         if self._stored.loki_status_error:
@@ -945,13 +935,7 @@ class JujuControllerCharm(CharmBase):
                 self._stored.loki_status_error = None
                 self._stored.loki_endpoint_seen = False
                 return
-            logger.error("failed to remove Loki endpoint: %s", exc)
-            self._stored.loki_status_error = "failed to remove loki endpoint"
-            self.unit.status = BlockedStatus(self._stored.loki_status_error)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.error("failed to remove Loki endpoint: %s", exc)
-            self._stored.loki_status_error = "failed to remove loki endpoint"
-            self.unit.status = BlockedStatus(self._stored.loki_status_error)
+            raise
 
 
 def metrics_username(relation: Relation) -> str:
