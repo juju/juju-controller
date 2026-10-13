@@ -25,6 +25,9 @@ provides:
   metrics-endpoint:
     interface: prometheus_scrape
     optional: true
+  grafana-dashboard:
+    interface: grafana_dashboard
+    optional: true
 
 requires:
   charm-tracing:
@@ -84,6 +87,8 @@ platforms:
   ubuntu@26.04:riscv64:
 
 charm-libs:
+  - lib: grafana_k8s.grafana_dashboard
+    version: "0"
   - lib: prometheus_k8s.prometheus_scrape
     version: "0"
   - lib: tempo_coordinator_k8s.tracing
