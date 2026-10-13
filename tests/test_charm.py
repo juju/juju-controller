@@ -11,6 +11,7 @@ import yaml
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     ProviderApplicationData,
 )
+from charms.grafana_k8s.v0.grafana_dashboard import LZMABase64
 from charms.tempo_coordinator_k8s.v0.tracing import (
     ProtocolType,
     Receiver,
@@ -107,6 +108,89 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(data["controller-url"], "wss://controller/api")
         self.assertEqual(data["is-juju"], 'True')
         self.assertEqual(data.get("identity-provider-url"), None)
+
+    def test_grafana_dashboard_relation_publishes_controller_dashboard(self):
+        harness = self.harness
+        harness.set_leader(True)
+        relation_id = harness.add_relation("grafana-dashboard", "grafana-k8s")
+
+        relation_data = harness.get_relation_data(relation_id, "juju-controller")
+        templates = json.loads(relation_data["dashboards"])["templates"]
+        dashboard = json.loads(LZMABase64.decompress(
+            templates["file:juju_controller"]["content"]
+        ))
+
+        self.assertEqual(dashboard["title"], "Juju Controller")
+        self.assertTrue(any(
+            "juju_apiserver_request_duration_seconds_count" in target["expr"]
+            for panel in dashboard["panels"] for target in panel["targets"]
+        ))
+
+    def test_grafana_dashboard_relation_replayed_on_leader_elected(self):
+        harness = self.harness
+        harness.set_leader(False)
+        relation_id = harness.add_relation("grafana-dashboard", "grafana-k8s")
+
+        relation_data = harness.get_relation_data(relation_id, "juju-controller")
+        self.assertNotIn("dashboards", relation_data)
+
+        harness.set_leader(True)
+
+        relation_data = harness.get_relation_data(relation_id, "juju-controller")
+        self.assertIn("dashboards", relation_data)
+
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    @patch("controlsocket.ControlSocketClient.add_metrics_user")
+    def test_metrics_relation_publishes_prometheus_alerts(self, _add_user, _open):
+        self.harness.set_leader(True)
+        self.harness.add_network(address="192.168.1.17", endpoint="metrics-endpoint")
+        relation_id = self.harness.add_relation("metrics-endpoint", "prometheus-k8s")
+
+        relation_data = self.harness.get_relation_data(relation_id, "juju-controller")
+        rules = json.loads(relation_data["alert_rules"])
+        names = {
+            rule["alert"]
+            for group in rules["groups"]
+            for rule in group["rules"]
+            if rule["alert"].startswith("JujuController")
+        }
+        self.assertEqual(names, {
+            "JujuControllerMetricsUnavailable",
+            "JujuControllerHighAPIErrorRate",
+            "JujuControllerDatabaseErrors",
+            "JujuControllerDatabaseSlow",
+        })
+        for group in rules["groups"]:
+            for rule in group["rules"]:
+                self.assertNotIn("%%juju_topology%%", rule["expr"])
+
+    def test_grafana_dashboard_validation_error_sets_blocked_status(self):
+        harness = self.harness
+        harness.set_leader(True)
+        relation_id = harness.add_relation("grafana-dashboard", "grafana-k8s")
+        harness.add_relation_unit(relation_id, "grafana-k8s/0")
+        harness.charm._stored.tracing_status_error = None
+        harness.charm._stored.workload_tracing_status_error = None
+
+        harness.update_relation_data(
+            relation_id,
+            "grafana-k8s",
+            {"event": json.dumps({"valid": False, "errors": [{"error": "invalid query"}]})},
+        )
+
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, BlockedStatus)
+        self.assertIn("grafana dashboard error: invalid query", harness.charm.unit.status.message)
+
+        harness.update_relation_data(
+            relation_id,
+            "grafana-k8s",
+            {"event": json.dumps({"valid": True, "errors": []})},
+        )
+        with patch.object(harness.charm, "api_port", return_value=17070):
+            harness.evaluate_status()
+        self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
     @patch.dict(os.environ, {
         "JUJU_MACHINE_ID": "machine-0",
