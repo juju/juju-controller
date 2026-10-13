@@ -83,6 +83,12 @@ class TestCharm(unittest.TestCase):
             patcher = patch(f"controlsocket.ControlSocketClient.{method}")
             patcher.start()
             self.addCleanup(patcher.stop)
+        # config-changed pushes the SSH server port over the control socket,
+        # and a failed push fails the hook, so stub it for every test.
+        patcher = patch("controlsocket.ControlSocketClient.set_ssh_server_port")
+        self.mock_set_ssh_server_port = patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
@@ -94,7 +100,8 @@ class TestCharm(unittest.TestCase):
         harness.charm.on.start.emit()
         self.assertIsInstance(harness.charm.unit.status, ActiveStatus)
 
-    def test_dashboard_relation_joined(self):
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
+    def test_dashboard_relation_joined(self, *_):
         harness = self.harness
 
         harness.set_leader(True)
@@ -2348,9 +2355,10 @@ class TestCharm(unittest.TestCase):
         self.assertIsInstance(harness.charm.unit.status, MaintenanceStatus)
         self.assertIn("applying loki endpoint", harness.charm.unit.status.message)
 
+    @patch("builtins.open", new_callable=mock_open, read_data=agent_conf)
     @patch("controlsocket.ControlSocketClient.set_loki_endpoint")
     def test_loki_push_api_https_endpoint_applies_with_insecure_skip_verify(
-        self, mock_set_loki_endpoint
+        self, mock_set_loki_endpoint, *_
     ):
         harness = self.harness
         harness.set_leader(True)
@@ -2705,6 +2713,130 @@ class TestCharm(unittest.TestCase):
         expected = {'1': '192.168.1.17', '2': '192.168.1.100'}
         self.assertEqual(json.loads(app_data['db-bind-addresses']), expected)
         mock_reload_config.assert_called_once()
+
+
+@patch("controlsocket.ControlSocketClient.set_workload_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_charm_tracing_config", Mock())
+@patch("controlsocket.ControlSocketClient.set_loki_endpoint", Mock())
+class TestControllerPorts(unittest.TestCase):
+    """Tests that the charm opens the SSH server port declared in config.
+
+    The SSH server port is a property of the charm and is opened via config.
+    It only becomes reachable once the application is exposed.
+    """
+
+    def setUp(self):
+        # Reconciling ports pushes the SSH server port over the control socket,
+        # which would otherwise try to talk to a real Unix socket. Patch it so
+        # the port tests exercise set_ports in isolation.
+        patcher = patch("controlsocket.ControlSocketClient.set_ssh_server_port")
+        self.mock_set_ssh_server_port = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        # The SSH server port is checked against the API port, read from
+        # agent.conf. Put the API server on 17070.
+        patcher = patch.object(JujuControllerCharm, "api_port", return_value=17070)
+        self.mock_api_port = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.harness = Harness(JujuControllerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+
+    def _opened(self):
+        # Return the set of (protocol, port) tuples currently opened.
+        return {(p.protocol, p.port) for p in self.harness.model.unit.opened_ports()}
+
+    def test_default_port_opened_on_config_changed(self):
+        # With default config, the SSH server port is opened.
+        self.harness.charm.on.config_changed.emit()
+
+        self.assertEqual(self._opened(), {("tcp", 17022)})
+
+    def test_custom_port_opened(self):
+        # Changing the port config opens the new port and closes the old one
+        # (set_ports is declarative).
+        self.harness.charm.on.config_changed.emit()
+        self.assertIn(("tcp", 17022), self._opened())
+
+        self.harness.update_config({"ssh-server-port": 17099})
+
+        self.assertEqual(self._opened(), {("tcp", 17099)})
+
+    def test_ssh_server_port_pushed_over_control_socket(self):
+        # Reconciling ports pushes the SSH server port to the controller agent
+        # so it can (re)start the SSH server on the configured port.
+        self.harness.charm.on.config_changed.emit()
+        self.mock_set_ssh_server_port.assert_called_with(17022)
+
+        # Changing the port pushes the new value.
+        self.mock_set_ssh_server_port.reset_mock()
+        self.harness.update_config({"ssh-server-port": 17099})
+        self.mock_set_ssh_server_port.assert_called_with(17099)
+
+    def test_ssh_server_port_pushed_before_opened(self):
+        # The port must be pushed to the controller agent before it is opened,
+        # so the firewall never opens a port the SSH server isn't listening on.
+        def assert_not_yet_opened(port):
+            self.assertEqual(self._opened(), set())
+        self.mock_set_ssh_server_port.side_effect = assert_not_yet_opened
+
+        self.harness.update_config({"ssh-server-port": 17099})
+
+        self.mock_set_ssh_server_port.assert_called_once_with(17099)
+        self.assertEqual(self._opened(), {("tcp", 17099)})
+
+    def test_ssh_server_port_push_failure_fails_hook(self):
+        # A failed push fails the hook, so Juju discards any port changes and
+        # retries, instead of opening a port the SSH server isn't listening on.
+        self.mock_set_ssh_server_port.side_effect = APIError(
+            {}, 500, "Internal Server Error", "saving ssh server port")
+
+        with self.assertRaises(APIError):
+            self.harness.update_config({"ssh-server-port": 17099})
+
+        self.assertEqual(self._opened(), set())
+
+    def test_ssh_server_port_colliding_with_api_port_blocks(self):
+        # The API server is on 17070. A colliding SSH server port is neither
+        # pushed nor opened, and the unit is blocked.
+        self.harness.update_config({"ssh-server-port": 17070})
+
+        self.mock_set_ssh_server_port.assert_not_called()
+        self.assertEqual(self._opened(), set())
+        self.harness.evaluate_status()
+        self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+        self.assertEqual(
+            self.harness.charm.unit.status.message,
+            "ssh-server-port 17070 collides with the controller API port",
+        )
+
+    def test_ssh_server_port_out_of_range_blocks(self):
+        # An out-of-range SSH server port is neither pushed nor opened, and
+        # the unit is blocked.
+        for port in (0, -1, 65536):
+            self.harness.update_config({"ssh-server-port": port})
+
+            self.mock_set_ssh_server_port.assert_not_called()
+            self.assertEqual(self._opened(), set())
+            self.harness.evaluate_status()
+            self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+            self.assertEqual(
+                self.harness.charm.unit.status.message,
+                f"ssh-server-port {port} is not a valid port (1-65535)",
+            )
+
+    def test_unreadable_agent_conf_fails_hook(self):
+        # Without the API port the collision check can't run, so the hook
+        # fails rather than pushing a possibly colliding port.
+        self.mock_api_port.side_effect = AgentConfException(
+            "agent.conf key 'apiaddresses' missing")
+
+        with self.assertRaises(AgentConfException):
+            self.harness.update_config({"ssh-server-port": 17099})
+
+        self.mock_set_ssh_server_port.assert_not_called()
+        self.assertEqual(self._opened(), set())
 
 
 class mockNetwork:

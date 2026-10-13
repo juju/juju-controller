@@ -28,6 +28,7 @@ from ops.charm import (
     InstallEvent,
     LeaderElectedEvent,
 )
+from ops import Port
 from ops.framework import StoredState
 from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, Relation
@@ -228,11 +229,17 @@ class JujuControllerCharm(CharmBase):
             has_blocking_status = True
 
         try:
-            self.api_port()
+            api_port = self.api_port()
         except AgentConfException as e:
             event.add_status(BlockedStatus(
                 f'cannot read controller API port from agent configuration: {e}'))
             has_blocking_status = True
+        else:
+            ssh_server_port = int(self.config.get('ssh-server-port') or 0)
+            ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, api_port)
+            if ssh_server_port_error:
+                event.add_status(BlockedStatus(ssh_server_port_error))
+                has_blocking_status = True
 
         if self._stored.tracing_status_error:
             event.add_status(BlockedStatus(self._stored.tracing_status_error))
@@ -262,7 +269,51 @@ class JujuControllerCharm(CharmBase):
     def _on_config_changed(self, _):
         controller_url = self.config['controller-url']
         logger.info('got a new controller-url: %r', controller_url)
+        self._reconcile_ports()
         self._update_workload_tracing_config()
+
+    def _reconcile_ports(self):
+        """Push the SSH server port declared in charm config to the controller
+        agent and open it.
+
+        The controller application (jujud) is the workload of this charm, so
+        its externally-reachable ports are a property of the charm. We use the
+        declarative set_ports so that any previously-opened port not in the
+        desired set is closed.
+        """
+        ssh_server_port = int(self.config.get('ssh-server-port') or 0)
+
+        # An unreadable agent configuration fails the hook rather than skipping
+        # the collision check.
+        ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, self.api_port())
+        if ssh_server_port_error:
+            # The error is reported as a blocked status. Leave the SSH server
+            # and the opened ports as they are rather than pushing an invalid
+            # port to the controller agent.
+            logger.warning(ssh_server_port_error)
+            return
+
+        # Push the port to the controller agent so it [re]starts the SSH
+        # server on it, before opening it. A failed push fails the hook, so
+        # Juju discards the port changes below and retries the hook, rather
+        # than opening a port the SSH server is not listening on.
+        self._control_socket.set_ssh_server_port(ssh_server_port)
+
+        desired = [Port('tcp', ssh_server_port)]
+        logger.info('reconciling controller ports: %r', desired)
+        self.unit.set_ports(*desired)
+
+    def _ssh_server_port_error(self, ssh_server_port: int, api_port: int) -> Optional[str]:
+        """Return why the SSH server port can't be used, or None.
+
+        The port must be a valid TCP port and must not collide with the
+        controller API port.
+        """
+        if not 1 <= ssh_server_port <= 65535:
+            return f'ssh-server-port {ssh_server_port} is not a valid port (1-65535)'
+        if ssh_server_port == api_port:
+            return f'ssh-server-port {ssh_server_port} collides with the controller API port'
+        return None
 
     def _on_dashboard_relation_joined(self, event):
         logger.info('got a new dashboard relation: %r', event)
