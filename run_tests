@@ -15,3 +15,4 @@ coverage run --source=src -m unittest -v "$@"
 coverage report -m
 ruff check --preview src/ tests/
 ruff format --preview --check src/ tests/
+pyright
