@@ -11,8 +11,11 @@ import urllib.parse
 import yaml
 from unixsocket import APIError
 
+from charms.grafana_k8s.v0.grafana_dashboard import (
+    GrafanaDashboardEvent,
+    GrafanaDashboardProvider,
+)
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
-from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
@@ -78,6 +81,7 @@ class JujuControllerCharm(CharmBase):
             s3_status_error=None,
             s3_status_pending=False,
             loki_status_error=None,
+            grafana_status_error=None,
             loki_endpoint_seen=False,
         )
 
@@ -121,6 +125,11 @@ class JujuControllerCharm(CharmBase):
             self.on.metrics_endpoint_relation_changed, self._on_metrics_reconcile)
         self.framework.observe(
             self.on.metrics_endpoint_relation_broken, self._on_metrics_endpoint_relation_broken)
+
+        self.framework.observe(
+            self._grafana_dashboard.on.dashboard_status_changed,
+            self._on_grafana_dashboard_status_changed,
+        )
 
         # DB cluster relation events are observed to maintain the current set of
         # bind addresses for the controller cluster in the charm's stored state,
@@ -246,6 +255,10 @@ class JujuControllerCharm(CharmBase):
 
         if self._stored.loki_status_error:
             event.add_status(BlockedStatus(self._stored.loki_status_error))
+            has_blocking_status = True
+
+        if self._stored.grafana_status_error:
+            event.add_status(BlockedStatus(self._stored.grafana_status_error))
             has_blocking_status = True
 
         if self._stored.s3_status_pending:
@@ -832,6 +845,15 @@ class JujuControllerCharm(CharmBase):
     def _on_loki_push_api_endpoint_departed(self, _event):
         """Handle removal of Loki push API endpoint."""
         self._reconcile_loki_endpoint()
+
+    def _on_grafana_dashboard_status_changed(self, event: GrafanaDashboardEvent):
+        """Surface dashboard validation failures reported by Grafana."""
+        if event.valid and not event.errors:
+            self._stored.grafana_status_error = None
+            return
+
+        error_message = event.error_message or "dashboard validation failed"
+        self._stored.grafana_status_error = f"grafana dashboard error: {error_message}"
 
     def _on_receive_loki_ca_cert_updated(self, event):
         ca_list = event.certificates

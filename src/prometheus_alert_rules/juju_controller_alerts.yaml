@@ -1,8 +1,8 @@
 groups:
-  - name: juju-controller
+  - name: juju-controller-alerts
     rules:
       - alert: JujuControllerMetricsUnavailable
-        expr: up{%%juju_topology%%,juju_model="controller",juju_application="controller"} == 0
+        expr: up{%%juju_topology%%} == 0
         for: 5m
         labels:
           severity: page
@@ -13,15 +13,15 @@ groups:
       - alert: JujuControllerHighAPIErrorRate
         expr: |
           sum by (juju_model, juju_model_uuid, juju_application) (
-            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller",error_code="error"}[5m])
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,error_code="error"}[5m])
           )
           /
           sum by (juju_model, juju_model_uuid, juju_application) (
-            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%}[5m])
           ) > 0.05
           and
           sum by (juju_model, juju_model_uuid, juju_application) (
-            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+            rate(juju_apiserver_request_duration_seconds_count{%%juju_topology%%}[5m])
           ) > 1
         for: 10m
         labels:
@@ -33,7 +33,7 @@ groups:
       - alert: JujuControllerDatabaseErrors
         expr: |
           sum by (juju_model, juju_model_uuid, juju_application) (
-            rate(juju_db_errors_total{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+            rate(juju_db_errors_total{%%juju_topology%%}[5m])
           ) > 0.1
         for: 10m
         labels:
@@ -46,7 +46,7 @@ groups:
         expr: |
           histogram_quantile(0.95,
             sum by (le, juju_model, juju_model_uuid, juju_application) (
-              rate(juju_db_duration_seconds_bucket{%%juju_topology%%,juju_model="controller",juju_application="controller"}[5m])
+              rate(juju_db_duration_seconds_bucket{%%juju_topology%%}[5m])
             )
           ) > 1
         for: 10m
