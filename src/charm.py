@@ -273,24 +273,29 @@ class JujuControllerCharm(CharmBase):
         self._update_workload_tracing_config()
 
     def _reconcile_ports(self):
-        """Push the SSH server port declared in charm config to the controller
-        agent and open it.
+        """Open the controller's API and SSH server ports, and push the SSH
+        server port declared in charm config to the controller agent.
 
         The controller application (jujud) is the workload of this charm, so
         its externally-reachable ports are a property of the charm. We use the
         declarative set_ports so that any previously-opened port not in the
         desired set is closed.
         """
+        # The API port can't change after bootstrap, so open whatever the API
+        # server listens on. With autocert this is 443, which is all Let's
+        # Encrypt needs as juju uses the TLS-ALPN challenge. An unreadable
+        # agent configuration fails the hook rather than skipping the
+        # collision check.
+        api_port = self.api_port()
         ssh_server_port = int(self.config.get('ssh-server-port') or 0)
 
-        # An unreadable agent configuration fails the hook rather than skipping
-        # the collision check.
-        ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, self.api_port())
+        ssh_server_port_error = self._ssh_server_port_error(ssh_server_port, api_port)
         if ssh_server_port_error:
             # The error is reported as a blocked status. Leave the SSH server
-            # and the opened ports as they are rather than pushing an invalid
-            # port to the controller agent.
+            # and its opened port as they are rather than pushing an invalid
+            # port to the controller agent, but make sure the API port is open.
             logger.warning(ssh_server_port_error)
+            self.unit.open_port('tcp', api_port)
             return
 
         # Push the port to the controller agent so it [re]starts the SSH
@@ -299,7 +304,7 @@ class JujuControllerCharm(CharmBase):
         # than opening a port the SSH server is not listening on.
         self._control_socket.set_ssh_server_port(ssh_server_port)
 
-        desired = [Port('tcp', ssh_server_port)]
+        desired = [Port('tcp', api_port), Port('tcp', ssh_server_port)]
         logger.info('reconciling controller ports: %r', desired)
         self.unit.set_ports(*desired)
 
