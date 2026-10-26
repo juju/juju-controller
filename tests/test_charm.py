@@ -83,10 +83,11 @@ class TestCharm(unittest.TestCase):
             patcher = patch(f"controlsocket.ControlSocketClient.{method}")
             patcher.start()
             self.addCleanup(patcher.stop)
-        # config-changed pushes the SSH server port over the control socket,
-        # and a failed push fails the hook, so stub it for every test.
-        patcher = patch("controlsocket.ControlSocketClient.set_ssh_server_port")
-        self.mock_set_ssh_server_port = patcher.start()
+        # config-changed and leader-elected reconcile the controller ports,
+        # which reads agent.conf and pushes the SSH server port over the
+        # control socket. TestControllerPorts covers that, so stub it here.
+        patcher = patch.object(JujuControllerCharm, "_reconcile_ports")
+        patcher.start()
         self.addCleanup(patcher.stop)
 
         self.harness = Harness(JujuControllerCharm)
@@ -2739,8 +2740,11 @@ class TestControllerPorts(unittest.TestCase):
         self.mock_api_port = patcher.start()
         self.addCleanup(patcher.stop)
 
+        # Only the leader pushes the SSH server port. Set leadership before
+        # begin so leader-elected is not emitted during set up.
         self.harness = Harness(JujuControllerCharm)
         self.addCleanup(self.harness.cleanup)
+        self.harness.set_leader(True)
         self.harness.begin()
 
     def _opened(self):
@@ -2856,6 +2860,51 @@ class TestControllerPorts(unittest.TestCase):
 
         self.mock_set_ssh_server_port.assert_not_called()
         self.assertEqual(self._opened(), set())
+
+    def test_non_leader_opens_ports_without_pushing(self):
+        # The SSH server port is controller-wide, so only the leader pushes
+        # it. A non-leader still opens both ports for its own SSH server.
+        self.harness.set_leader(False)
+
+        self.harness.update_config({"ssh-server-port": 17099})
+
+        self.mock_set_ssh_server_port.assert_not_called()
+        self.assertEqual(self._opened(), {("tcp", 17070), ("tcp", 17099)})
+
+    def test_non_leader_without_control_socket_succeeds(self):
+        # A unit joining the controller has no control socket until it has
+        # joined the Dqlite cluster, which needs dbcluster-relation-changed
+        # to run after config-changed. config-changed must not fail on it.
+        self.harness.set_leader(False)
+        self.mock_set_ssh_server_port.side_effect = FileNotFoundError(
+            2, "No such file or directory")
+
+        self.harness.charm.on.config_changed.emit()
+
+        self.assertEqual(self._opened(), {("tcp", 17070), ("tcp", 17022)})
+
+    def test_non_leader_invalid_ssh_server_port_blocks(self):
+        # A non-leader still validates the port and is blocked on a bad one.
+        self.harness.set_leader(False)
+
+        self.harness.update_config({"ssh-server-port": 17070})
+
+        self.mock_set_ssh_server_port.assert_not_called()
+        self.assertEqual(self._opened(), {("tcp", 17070)})
+        self.harness.evaluate_status()
+        self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+
+    def test_ssh_server_port_pushed_on_leader_elected(self):
+        # A new leader pushes the configured port, in case the previous
+        # leader lost leadership before its push succeeded.
+        self.harness.set_leader(False)
+        self.harness.update_config({"ssh-server-port": 17099})
+        self.mock_set_ssh_server_port.assert_not_called()
+
+        self.harness.set_leader(True)
+
+        self.mock_set_ssh_server_port.assert_called_once_with(17099)
+        self.assertEqual(self._opened(), {("tcp", 17070), ("tcp", 17099)})
 
 
 class mockNetwork:
