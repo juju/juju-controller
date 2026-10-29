@@ -212,6 +212,7 @@ class JujuControllerCharm(CharmBase):
         self._update_charm_tracing_config()
         self._update_workload_tracing_config()
         self._reconcile_loki_endpoint()
+        self._reconcile_ports()
 
         config = self._current_s3_config()
         if config is None:
@@ -298,11 +299,13 @@ class JujuControllerCharm(CharmBase):
             self.unit.open_port('tcp', api_port)
             return
 
+
         # Push the port to the controller agent so it [re]starts the SSH
         # server on it, before opening it. A failed push fails the hook, so
         # Juju discards the port changes below and retries the hook, rather
         # than opening a port the SSH server is not listening on.
-        self._control_socket.set_ssh_server_port(ssh_server_port)
+        if self.unit.is_leader():
+            self._control_socket.set_ssh_server_port(ssh_server_port)
 
         desired = [Port('tcp', api_port), Port('tcp', ssh_server_port)]
         logger.info('reconciling controller ports: %r', desired)
